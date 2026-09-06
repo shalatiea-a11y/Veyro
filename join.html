@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Restaurant Ops — Finish setup</title>
+<meta name="theme-color" content="#12141d">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div class="screen" style="padding-top:40px;max-width:360px">
+  <h1>Finish setting up</h1>
+  <p class="muted">You're signed in, but your account isn't linked to an organization yet. Enter your invite code to finish.</p>
+
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Invite code</label>
+  <input id="code" placeholder="e.g. 7H4KMQ2P" autocapitalize="characters"
+    style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px;text-transform:uppercase">
+
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Your name</label>
+  <input id="fullName" style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+
+  <button class="primary" id="finishBtn">Finish setup</button>
+  <p id="errorMsg" class="muted" style="color:#b91c1c;display:none"></p>
+  <p class="muted" style="margin-top:20px"><a href="#" id="signOutLink">Sign out</a></p>
+</div>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script src="storage.js"></script>
+<script>
+  (async () => {
+    await Auth.requireSession();
+    try {
+      const pending = JSON.parse(localStorage.getItem("rios_pending_invite") || "null");
+      if (pending) {
+        document.getElementById("code").value = pending.code;
+        document.getElementById("fullName").value = pending.fullName;
+      }
+    } catch (e) { /* ignore malformed/inaccessible storage */ }
+  })();
+
+  document.getElementById("signOutLink").addEventListener("click", (e) => { e.preventDefault(); Auth.signOut(); });
+
+  document.getElementById("finishBtn").addEventListener("click", async () => {
+    const code = document.getElementById("code").value.trim().toUpperCase();
+    const fullName = document.getElementById("fullName").value.trim();
+    const errorMsg = document.getElementById("errorMsg");
+    errorMsg.style.display = "none";
+    if (!code || !fullName) {
+      errorMsg.textContent = "Please fill in both fields.";
+      errorMsg.style.display = "block";
+      return;
+    }
+    try {
+      await Store.redeemInvite(code, fullName);
+      try { localStorage.removeItem("rios_pending_invite"); } catch (e) {}
+      window.location.href = "index.html";
+    } catch (err) {
+      errorMsg.textContent = err.message;
+      errorMsg.style.display = "block";
+    }
+  });
+</script>
+</body>
+</html>

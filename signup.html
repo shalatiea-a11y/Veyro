@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Restaurant Ops — Join your team</title>
+<meta name="theme-color" content="#12141d">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div class="screen" style="padding-top:40px;max-width:360px">
+  <h1>Join your team</h1>
+  <p class="muted">Enter the invite code your manager or admin shared with you.</p>
+
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Invite code</label>
+  <input id="code" placeholder="e.g. 7H4KMQ2P" autocapitalize="characters"
+    style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px;text-transform:uppercase">
+
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Your name</label>
+  <input id="fullName" style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Email</label>
+  <input id="email" type="email" autocomplete="username"
+    style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Password</label>
+  <input id="password" type="password" autocomplete="new-password" minlength="6"
+    style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+
+  <button class="primary" id="joinBtn">Create account</button>
+  <p id="statusMsg" class="muted" style="display:none;margin-top:14px"></p>
+  <p id="errorMsg" class="muted" style="color:#b91c1c;display:none"></p>
+  <p class="muted" style="margin-top:20px">Already have an account? <a href="login.html">Sign in</a></p>
+</div>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script src="storage.js"></script>
+<script>
+  document.getElementById("joinBtn").addEventListener("click", async () => {
+    const code = document.getElementById("code").value.trim().toUpperCase();
+    const fullName = document.getElementById("fullName").value.trim();
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const errorMsg = document.getElementById("errorMsg");
+    const statusMsg = document.getElementById("statusMsg");
+    errorMsg.style.display = "none";
+    statusMsg.style.display = "none";
+
+    if (!code || !fullName || !email || !password) {
+      errorMsg.textContent = "Please fill in every field.";
+      errorMsg.style.display = "block";
+      return;
+    }
+
+    const { data, error } = await supabaseClient.auth.signUp({ email, password });
+    if (error) {
+      errorMsg.textContent = error.message;
+      errorMsg.style.display = "block";
+      return;
+    }
+
+    if (data.session) {
+      // Email confirmation is off for this Supabase project — we already
+      // have a live session, so finish onboarding immediately.
+      try {
+        await Store.redeemInvite(code, fullName);
+        window.location.href = "index.html";
+      } catch (err) {
+        errorMsg.textContent = "Account created, but the invite code could not be used: " + err.message;
+        errorMsg.style.display = "block";
+      }
+    } else {
+      // Email confirmation is required — no session yet. Stash the invite
+      // details (device-local only, not sent anywhere) so join.html can
+      // finish onboarding automatically right after they confirm and log in.
+      try {
+        localStorage.setItem("rios_pending_invite", JSON.stringify({ code, fullName }));
+      } catch (e) { /* localStorage unavailable — they'll just re-enter the code on join.html */ }
+      statusMsg.textContent = "Check your email to confirm your account, then sign in — we'll finish setting up your account automatically.";
+      statusMsg.style.display = "block";
+    }
+  });
+</script>
+</body>
+</html>

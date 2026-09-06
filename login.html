@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Restaurant Ops — Sign in</title>
+<meta name="theme-color" content="#12141d">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+<div class="screen" style="padding-top:60px;max-width:360px">
+  <h1>Restaurant Ops</h1>
+  <p class="muted">Sign in to your organization's account</p>
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Email</label>
+  <input id="email" type="email" autocomplete="username"
+    style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+  <label style="font-size:13px;color:#6b7280;font-weight:600">Password</label>
+  <input id="password" type="password" autocomplete="current-password"
+    style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+  <button class="primary" id="signInBtn">Sign In</button>
+  <p id="errorMsg" class="muted" style="color:#b91c1c;display:none"></p>
+  <p class="muted" style="margin-top:20px">Have an invite code? <a href="signup.html">Create an account</a></p>
+</div>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script>
+  document.getElementById("signInBtn").addEventListener("click", async () => {
+    const email = document.getElementById("email").value.trim();
+    const password = document.getElementById("password").value;
+    const errorMsg = document.getElementById("errorMsg");
+    errorMsg.style.display = "none";
+    const { error } = await Auth.signIn(email, password);
+    if (error) {
+      errorMsg.textContent = error.message;
+      errorMsg.style.display = "block";
+      return;
+    }
+    window.location.href = "index.html";
+  });
+</script>
+</body>
+</html>
