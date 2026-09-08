@@ -27,6 +27,7 @@ async function render() {
       <div class="tabs">
         <button class="tab ${tab === "products" ? "active" : ""}" data-tab="products">Products</button>
         <button class="tab ${tab === "locations" ? "active" : ""}" data-tab="locations">Locations</button>
+        <button class="tab ${tab === "suppliers" ? "active" : ""}" data-tab="suppliers">Suppliers</button>
         <button class="tab ${tab === "team" ? "active" : ""}" data-tab="team">Team</button>
       </div>
       <div id="adminError" class="muted" style="color:#b91c1c;display:none;margin-bottom:12px"></div>
@@ -39,6 +40,7 @@ async function render() {
   try {
     if (tab === "products") await renderProducts();
     else if (tab === "locations") await renderLocations();
+    else if (tab === "suppliers") await renderSuppliers();
     else await renderTeam();
   } catch (err) {
     showError(err);
@@ -106,6 +108,34 @@ async function renderLocations() {
 
 async function toggleLocation(id, active) {
   try { await Store.setLocationActive(id, active); await renderLocations(); }
+  catch (err) { showError(err); }
+}
+
+async function renderSuppliers() {
+  const suppliers = await Store.getAllSuppliers();
+  const body = document.getElementById("adminBody");
+  body.innerHTML = `
+    <form id="supplierForm" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+      <div class="stepper-row"><label>Name</label><input name="name" required style="flex:1;margin-left:12px;padding:8px;border:1px solid #e5e7eb;border-radius:8px"></div>
+      <button class="primary" type="submit" style="margin-top:10px">Add supplier</button>
+    </form>
+    ${suppliers.length === 0 ? `<p class="muted">No suppliers yet — add one before anyone can record a delivery.</p>` : suppliers.map((s) => `
+      <div class="list-row" style="cursor:default">
+        <span>${s.name}</span>
+        <button class="pill" onclick="toggleSupplier('${s.id}', ${!s.active})">${s.active ? "Deactivate" : "Reactivate"}</button>
+      </div>
+    `).join("")}
+  `;
+  document.getElementById("supplierForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = new FormData(e.target);
+    try { await Store.createSupplier(f.get("name")); await renderSuppliers(); }
+    catch (err) { showError(err); }
+  });
+}
+
+async function toggleSupplier(id, active) {
+  try { await Store.setSupplierActive(id, active); await renderSuppliers(); }
   catch (err) { showError(err); }
 }
 

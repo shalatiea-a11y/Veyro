@@ -42,10 +42,10 @@ const views = {
             <span class="task-label">Morning Inventory</span>
             <span class="task-status">${existing ? "Completed" : "Start"}</span>
           </button>
-          <button class="task-card disabled">
+          <button class="task-card" onclick="window.location.href='delivery.html'">
             <span class="dot blue"></span>
             <span class="task-label">Delivery Receiving</span>
-            <span class="task-status">Coming soon</span>
+            <span class="task-status">Record delivery</span>
           </button>
           <button class="task-card" onclick="go('history')">
             <span class="dot blue"></span>
@@ -189,6 +189,7 @@ const views = {
     window.stepField = (id, field, delta) => {
       const e = session.entries[id];
       e[field] = Math.max(0, (Number(e[field]) || 0) + delta);
+      e._confirmedHigh = false; // any change re-triggers the suspicious-quantity check
       document.getElementById("val-" + field).textContent = e[field];
       updateTotal();
     };
@@ -249,8 +250,23 @@ const views = {
   },
 };
 
+// A soft sanity check, not a hard limit — some restaurants genuinely order
+// in bulk. Never silently changes what the employee entered; it just asks
+// for a second tap before accepting an unusually large count, the same
+// principle as "AI proposes, human confirms" applied to plain data entry.
+const SUSPICIOUS_BOX_THRESHOLD = 100;
+
 function commitEntry(productId) {
   const p = PRODUCTS.find((x) => x.id === productId);
+  const entry = session.entries[productId];
+  const enteredBoxes = entry.mode === "boxes+pieces" ? Number(entry.fullBoxes) || 0 : 0;
+  if (enteredBoxes > SUSPICIOUS_BOX_THRESHOLD && !entry._confirmedHigh) {
+    const ok = window.confirm(
+      `${enteredBoxes} boxes is unusually high for ${p.name}. That's ${Store.normalizeQuantity(p, entry)} pieces — is that right?`
+    );
+    if (!ok) return;
+    entry._confirmedHigh = true;
+  }
   go("productList", p.category);
 }
 

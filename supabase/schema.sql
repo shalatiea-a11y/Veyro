@@ -373,6 +373,299 @@ $$;
 -- table owner, but this makes the intent explicit rather than implicit.
 grant execute on function redeem_invite(text, text) to authenticated;
 
+-- =======================================================================
+-- Inventory 2.0: controlled corrections
+-- =======================================================================
+-- A submitted inventory count is an audit record — the earlier design
+-- correctly made it admin-only to UPDATE, but gave no way to actually fix
+-- a mistake ("entered 24 instead of 14") without either a raw UPDATE that
+-- destroys what was originally recorded, or leaving wrong data in place
+-- forever. This table + function let an admin correct a line while
+-- preserving exactly what was there before, who changed it, when, and why.
+create table inventory_item_corrections (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references inventory_items(id) on delete cascade,
+  previous_entry_mode text not null,
+  previous_full_boxes numeric,
+  previous_pieces numeric,
+  previous_fraction text,
+  previous_normalized_quantity numeric not null,
+  new_entry_mode text not null,
+  new_full_boxes numeric,
+  new_pieces numeric,
+  new_fraction text,
+  new_normalized_quantity numeric not null,
+  reason text,
+  corrected_by uuid not null references profiles(id),
+  corrected_at timestamptz not null default now()
+);
+alter table inventory_item_corrections enable row level security;
+
+create policy "corrections readable via own org submission" on inventory_item_corrections
+  for select using (
+    item_id in (
+      select ii.id from inventory_items ii
+      join inventory_submissions s on s.id = ii.submission_id
+      where s.organization_id = current_org_id()
+    )
+  );
+-- Only an insert policy — no update/delete at all, so a correction log
+-- entry, once written, is permanent (you correct forward with a new
+-- correction row, you don't edit history). correct_inventory_item() is
+-- SECURITY INVOKER (like submit_daily_inventory/submit_delivery), so this
+-- policy is what actually authorizes its INSERT — the function's own role
+-- check and this policy are deliberately redundant, matching this
+-- schema's existing style of policies as the real boundary and function
+-- bodies as a second layer, rather than reaching for SECURITY DEFINER.
+create policy "admin inserts corrections in own org" on inventory_item_corrections
+  for insert with check (
+    current_role_name() = 'admin'
+    and item_id in (
+      select ii.id from inventory_items ii
+      join inventory_submissions s on s.id = ii.submission_id
+      where s.organization_id = current_org_id()
+    )
+  );
+
+create or replace function correct_inventory_item(
+  p_item_id uuid, p_entry_mode text, p_full_boxes numeric, p_pieces numeric,
+  p_fraction text, p_reason text
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_item inventory_items%rowtype;
+  v_org_id uuid;
+  v_new_normalized numeric;
+  v_fraction_value numeric;
+begin
+  if current_role_name() != 'admin' then
+    raise exception 'Only an admin can correct a submitted inventory count';
+  end if;
+
+  select ii.* into v_item from inventory_items ii
+    join inventory_submissions s on s.id = ii.submission_id
+    where ii.id = p_item_id and s.organization_id = current_org_id();
+  if not found then
+    raise exception 'Inventory item not found in your organization';
+  end if;
+
+  -- Recompute using the package size that applied AT THE TIME of the
+  -- original count (units_per_package_at_entry), never the product's
+  -- current configuration — this is what keeps historical inventory
+  -- interpretable even after a product's package size changes later.
+  if p_entry_mode = 'boxes_pieces' then
+    v_new_normalized := coalesce(p_full_boxes, 0) * v_item.units_per_package_at_entry + coalesce(p_pieces, 0);
+  elsif p_entry_mode = 'fraction' then
+    v_fraction_value := case p_fraction
+      when 'full' then 1 when '3/4' then 0.75 when '1/2' then 0.5
+      when '1/3' then 1.0/3 when '1/4' then 0.25 else 0 end;
+    v_new_normalized := round(v_item.units_per_package_at_entry * v_fraction_value);
+  elsif p_entry_mode = 'pieces' then
+    v_new_normalized := coalesce(p_pieces, 0);
+  else
+    raise exception 'Unknown entry mode %', p_entry_mode;
+  end if;
+
+  insert into inventory_item_corrections (
+    item_id, previous_entry_mode, previous_full_boxes, previous_pieces, previous_fraction,
+    previous_normalized_quantity, new_entry_mode, new_full_boxes, new_pieces, new_fraction,
+    new_normalized_quantity, reason, corrected_by
+  ) values (
+    v_item.id, v_item.entry_mode, v_item.entered_full_boxes, v_item.entered_pieces, v_item.entered_fraction,
+    v_item.normalized_quantity, p_entry_mode, p_full_boxes, p_pieces, p_fraction,
+    v_new_normalized, p_reason, auth.uid()
+  );
+
+  update inventory_items set
+    entry_mode = p_entry_mode, entered_full_boxes = p_full_boxes, entered_pieces = p_pieces,
+    entered_fraction = p_fraction, normalized_quantity = v_new_normalized
+  where id = v_item.id;
+
+  return v_item.id;
+end;
+$$;
+
+-- =======================================================================
+-- Delivery Receiving foundation (manual entry — see README "Known
+-- limitations": camera capture, AI document extraction, product matching,
+-- and expected-vs-received discrepancy detection are NOT implemented.
+-- Building fake versions of those would mean either hard-coding a
+-- pretend AI provider or fabricating "expected quantity" data that does
+-- not exist yet (no purchase-order source is configured) — both
+-- explicitly against this project's own rules. This lays the real,
+-- usable foundation: an employee can record what a supplier actually
+-- delivered, structured and atomic, ready for those capabilities to
+-- attach to later without a schema rewrite.
+-- =======================================================================
+create table suppliers (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  name text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+alter table suppliers enable row level security;
+
+create policy "suppliers readable in own org" on suppliers
+  for select using (organization_id = current_org_id());
+create policy "suppliers admin insert" on suppliers
+  for insert with check (organization_id = current_org_id() and current_role_name() = 'admin');
+create policy "suppliers admin update" on suppliers
+  for update using (organization_id = current_org_id() and current_role_name() = 'admin');
+create policy "suppliers admin delete" on suppliers
+  for delete using (organization_id = current_org_id() and current_role_name() = 'admin');
+
+create table deliveries (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id) on delete cascade,
+  location_id uuid not null references locations(id) on delete cascade,
+  supplier_id uuid not null references suppliers(id),
+  received_by uuid not null references profiles(id),
+  received_at timestamptz not null default now(),
+  invoice_number text,
+  invoice_date date,
+  notes text
+);
+alter table deliveries enable row level security;
+
+create table delivery_items (
+  id uuid primary key default gen_random_uuid(),
+  delivery_id uuid not null references deliveries(id) on delete cascade,
+  product_id uuid not null references products(id),
+  entry_mode text not null check (entry_mode in ('boxes_pieces', 'fraction', 'pieces')),
+  entered_full_boxes numeric check (entered_full_boxes is null or entered_full_boxes >= 0),
+  entered_pieces numeric check (entered_pieces is null or entered_pieces >= 0),
+  entered_fraction text check (entered_fraction is null or entered_fraction in ('full','3/4','1/2','1/3','1/4')),
+  units_per_package_at_entry integer not null check (units_per_package_at_entry > 0),
+  received_quantity numeric not null check (received_quantity >= 0),
+  unit_price numeric check (unit_price is null or unit_price >= 0)
+);
+alter table delivery_items enable row level security;
+
+create index deliveries_org_idx on deliveries (organization_id);
+create index delivery_items_delivery_idx on delivery_items (delivery_id);
+
+-- Same read/write shape as inventory_submissions: admin/manager read
+-- everything in the org, employees only their assigned location(s); any
+-- org member can insert (via submit_delivery() below, not direct
+-- inserts); only admin can edit/delete a recorded delivery.
+create policy "deliveries read scoped to role" on deliveries
+  for select using (
+    organization_id = current_org_id()
+    and (
+      current_role_name() in ('admin', 'manager')
+      or location_id in (select location_id from employee_locations where profile_id = auth.uid())
+    )
+  );
+create policy "deliveries insert in own org" on deliveries
+  for insert with check (organization_id = current_org_id());
+create policy "deliveries admin update" on deliveries
+  for update using (organization_id = current_org_id() and current_role_name() = 'admin');
+create policy "deliveries admin delete" on deliveries
+  for delete using (organization_id = current_org_id() and current_role_name() = 'admin');
+
+create policy "delivery items read via own org delivery" on delivery_items
+  for select using (delivery_id in (select id from deliveries where organization_id = current_org_id()));
+create policy "delivery items insert via own org delivery" on delivery_items
+  for insert with check (delivery_id in (select id from deliveries where organization_id = current_org_id()));
+create policy "delivery items admin update" on delivery_items
+  for update using (
+    current_role_name() = 'admin'
+    and delivery_id in (select id from deliveries where organization_id = current_org_id())
+  );
+create policy "delivery items admin delete" on delivery_items
+  for delete using (
+    current_role_name() = 'admin'
+    and delivery_id in (select id from deliveries where organization_id = current_org_id())
+  );
+
+-- Atomic delivery submission, mirroring submit_daily_inventory(): server
+-- recomputes received_quantity from the raw entered values (never trusts
+-- a client-supplied total), validates the location/supplier/products
+-- belong to the caller's own org, enforces the same employee-location
+-- scoping, and writes the delivery + all items in one transaction.
+create or replace function submit_delivery(
+  p_location_id uuid, p_supplier_id uuid, p_invoice_number text,
+  p_invoice_date date, p_notes text, p_items jsonb
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_org_id uuid := current_org_id();
+  v_delivery_id uuid;
+  v_item jsonb;
+  v_product products%rowtype;
+  v_mode text;
+  v_full_boxes numeric;
+  v_pieces numeric;
+  v_fraction text;
+  v_unit_price numeric;
+  v_received numeric;
+  v_fraction_value numeric;
+begin
+  if v_org_id is null then
+    raise exception 'No organization linked to this account';
+  end if;
+
+  if not exists (select 1 from locations where id = p_location_id and organization_id = v_org_id) then
+    raise exception 'Location does not belong to your organization';
+  end if;
+
+  if current_role_name() = 'employee'
+     and not exists (select 1 from employee_locations where profile_id = auth.uid() and location_id = p_location_id) then
+    raise exception 'You are not assigned to this location';
+  end if;
+
+  if not exists (select 1 from suppliers where id = p_supplier_id and organization_id = v_org_id) then
+    raise exception 'Supplier does not belong to your organization';
+  end if;
+
+  insert into deliveries (organization_id, location_id, supplier_id, received_by, invoice_number, invoice_date, notes)
+  values (v_org_id, p_location_id, p_supplier_id, auth.uid(), p_invoice_number, p_invoice_date, p_notes)
+  returning id into v_delivery_id;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    select * into v_product from products
+      where id = (v_item->>'product_id')::uuid and organization_id = v_org_id;
+    if not found then
+      raise exception 'Product % does not belong to your organization', v_item->>'product_id';
+    end if;
+
+    v_mode := v_item->>'entry_mode';
+    v_full_boxes := nullif(v_item->>'entered_full_boxes', '')::numeric;
+    v_pieces := nullif(v_item->>'entered_pieces', '')::numeric;
+    v_fraction := nullif(v_item->>'entered_fraction', '');
+    v_unit_price := nullif(v_item->>'unit_price', '')::numeric;
+
+    if v_mode = 'boxes_pieces' then
+      v_received := coalesce(v_full_boxes, 0) * v_product.units_per_package + coalesce(v_pieces, 0);
+    elsif v_mode = 'fraction' then
+      v_fraction_value := case v_fraction
+        when 'full' then 1 when '3/4' then 0.75 when '1/2' then 0.5
+        when '1/3' then 1.0/3 when '1/4' then 0.25 else 0 end;
+      v_received := round(v_product.units_per_package * v_fraction_value);
+    elsif v_mode = 'pieces' then
+      v_received := coalesce(v_pieces, 0);
+    else
+      raise exception 'Unknown entry mode %', v_mode;
+    end if;
+
+    insert into delivery_items (
+      delivery_id, product_id, entry_mode, entered_full_boxes, entered_pieces,
+      entered_fraction, units_per_package_at_entry, received_quantity, unit_price
+    ) values (
+      v_delivery_id, v_product.id, v_mode, v_full_boxes, v_pieces,
+      v_fraction, v_product.units_per_package, v_received, v_unit_price
+    );
+  end loop;
+
+  return v_delivery_id;
+end;
+$$;
+
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
 -- in Supabase Auth (see README), then insert their profiles below.

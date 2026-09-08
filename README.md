@@ -26,8 +26,13 @@ Honest classification per area (see "Testing" for exactly what each claim rests 
 | Admin UI (`admin.html`) — create/deactivate products & locations, assign/unassign employees to locations | **VERIFIED** the underlying writes against real Postgres (each SQL statement the UI issues, run directly); **NOT VERIFIED** in a browser — see Phase 4 below |
 | `employee_locations` read policy scoped to the caller's own organization | **VERIFIED** (real bug, real fix — see Phase 4) |
 | Employee self-service onboarding via invite code (`signup.html`/`join.html`, `redeem_invite()`) | **VERIFIED** against real Postgres: valid redemption, reused/expired/nonexistent code rejection, already-has-a-profile rejection, cross-org invite invisibility, and a genuine concurrent-redemption race (see Phase 5) — **NOT VERIFIED** in a browser, and the email-confirmation branch's exact behavior depends on Supabase Auth settings this sandbox can't configure or test |
-| Employee/manager UI screens, PWA install, real Supabase Auth login | **NOT VERIFIED** — requires a real Supabase project + browser; this sandbox has no browser and cannot provision Supabase |
-| Delivery receiving, invoice AI, integrations, forecasting | **NOT BUILT** — deliberately out of scope for this MVP |
+| Employee/manager UI screens, real Supabase Auth login | **VERIFIED in production** — a real Supabase project was provisioned (project `veyro`), `schema.sql` run against it, an admin account created and confirmed to log in and use the app in a real browser. This is the first capability in this document verified outside this sandbox. |
+| PWA install, offline behavior | **NOT VERIFIED** on a physical device |
+| Delivery receiving (manual entry — see Phase 6) | Backend **VERIFIED** against real Postgres; browser UI **NOT VERIFIED** |
+| Invoice AI extraction, camera capture, product matching, expected-vs-received discrepancy detection | **NOT BUILT** — see Phase 6, "What's deliberately not built" |
+| Inventory corrections with audit trail (Phase 6) | **VERIFIED** against real Postgres |
+| Suspicious-quantity soft warning (Phase 6) | Code-reviewed only, **NOT VERIFIED** — it's a UI interaction (`window.confirm`), not deterministic logic with a pure function to unit-test |
+| Integrations (Oracle or any other external system), forecasting, ordering assistance | **NOT BUILT** — deliberately deferred; no external system has been identified or verified yet (see Phase 6) |
 
 ### How the backend was verified without a live Supabase project
 
@@ -271,6 +276,96 @@ the email-confirmation-required branch (the `localStorage` handoff to
 `join.html`) end-to-end. The `redeem_invite()` half of that path (what
 happens once they do reach `join.html` with a valid session) is verified;
 the Supabase Auth email round-trip in front of it is not.
+
+### Phase 6: Inventory 2.0 (corrections, sanity checks) + Delivery Receiving foundation
+
+**Inventory corrections.** The gap: an admin could edit a submitted
+inventory count directly (RLS already allowed it), but a raw `UPDATE`
+would silently destroy the original value — the opposite of an audit
+trail. Added `inventory_item_corrections` (append-only, insert policy
+only — no update/delete, so a correction is a new fact, not an edit of
+history) and `correct_inventory_item()`, which recomputes the total using
+`units_per_package_at_entry` (the package size that applied *at the
+original count*, never the product's current configuration — the same
+principle already used for the original submission, now honored on
+correction too). `manager.js` exposes this as a "Correct" button per line
+item, admin-only, that asks for the new count and an optional reason.
+
+Verified against real Postgres: an employee submits 20 boxes (480 pcs);
+an employee attempting to correct their own entry is rejected (admin
+only); an admin corrects it to 24 boxes, the item now shows 576, and the
+correction log preserves the original 480, the new 576, and the reason —
+confirmed by querying the table directly. This immediately surfaced a bug
+identical in shape to the Phase 2/4 pattern: the function is `SECURITY
+INVOKER`, so its own `INSERT` into the log table is itself subject to
+RLS as the calling admin — and the table had no insert policy at all,
+so even a legitimate admin correction was rejected with "new row
+violates row-level security policy." Fixed by adding an explicit
+admin-scoped insert policy (deliberately not switching to `SECURITY
+DEFINER`, to stay consistent with how `submit_daily_inventory()` and
+`submit_delivery()` already rely on RLS as the actual boundary). Also
+confirmed a second organization cannot see the correction at all.
+
+**Suspicious-quantity soft warning.** Per the spec's own instruction not
+to silently reject unusual-but-possibly-real quantities: entering more
+than 100 boxes now asks the employee to confirm ("240 boxes is unusually
+high for Big Meat — that's 5,760 pieces — is that right?") before
+accepting the entry, rather than blocking it or silently changing it.
+Implemented as a plain confirmation prompt, not a custom modal component —
+this is a UI interaction, not business logic, so it was code-reviewed
+rather than unit-tested (there's no pure function here to test in
+isolation the way `normalizeQuantity` has one).
+
+**Delivery Receiving — foundation only, manual entry.** This is the
+one place this phase deliberately did *not* build what was asked for.
+The request included camera capture, AI document extraction, product
+matching, and expected-vs-received discrepancy detection. None of those
+are built. Reasons, not excuses:
+
+- AI extraction needs a real decision — which provider, an API key, a
+  cost/rate-limit policy — that only the product owner can make. Faking
+  it (e.g. a hard-coded "AI" that just guesses from the invoice number)
+  would be exactly the "do not fabricate AI you don't have" rule this
+  same request insists on elsewhere.
+- Discrepancy detection ("expected 24, received 22") needs a real source
+  of *expected* quantities — a purchase order, a standing order, some
+  configured expectation. None exists in this system yet. Inventing
+  expected numbers to show a discrepancy screen would be fabricating data,
+  not building a feature.
+- Product matching (fuzzy-matching "Beef Patty Large 114g" to "Big Meat")
+  is only meaningful once there's OCR'd invoice text to match *against* —
+  building a matching UI with nothing to feed it would be building a
+  facade.
+
+What **is** built, because it's real and useful on its own: `suppliers`,
+`deliveries`, `delivery_items` tables; `submit_delivery()` — same
+atomic/server-recomputed/location-scoped pattern as
+`submit_daily_inventory()`; a Suppliers tab in `admin.html`; and
+`delivery.html`, where an employee manually records what a delivery
+actually contained (product, boxes+pieces, optional unit price) instead
+of that information going untracked. This is a real, smaller version of
+the target workflow — "photograph → AI reads → verify" becomes "count →
+enter → confirm" — with the exact same server-side guarantees inventory
+already has, and a schema shaped so AI extraction and discrepancy
+detection can attach to it later without a rewrite (the raw-entry vs.
+verified-value separation the spec asks for is already how
+`inventory_items` works, and `delivery_items` follows the same shape).
+
+Verified against real Postgres: admin creates a supplier; an employee
+attempting to create one directly is rejected (admin-only, matching the
+products/locations pattern); an employee records a delivery of 24 boxes
+Big Meat + 10 boxes Small Meat at their assigned location, and the stored
+`received_quantity` values are exactly 576 and 600 (server-recomputed,
+not client-trusted); an employee attempting a delivery at an unassigned
+location is rejected; a second organization sees zero of these
+deliveries or suppliers. `manager.js`'s branch view now also lists
+recent deliveries per location — without that, a recorded delivery would
+have no visibility anywhere, which would make the whole feature pointless
+even at "foundation" scope.
+
+**Not verified**: any of the new pages (`delivery.html`, the Suppliers
+tab, the correction modal) in an actual browser — only their underlying
+SQL operations, run directly and confirmed.
 
 ## Architecture
 

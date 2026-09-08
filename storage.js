@@ -94,7 +94,7 @@ const Store = (() => {
   // history). One request, one join, done by PostgREST/Postgres.
   const SUBMISSION_SELECT =
     "id, location_id, submitted_at, inventory_date, profiles(full_name), " +
-    "inventory_items(product_id, normalized_quantity, products(name))";
+    "inventory_items(id, product_id, normalized_quantity, products(name))";
 
   function toRecord(submission) {
     return {
@@ -104,6 +104,7 @@ const Store = (() => {
       timestamp: new Date(submission.submitted_at).getTime(),
       employee: submission.profiles?.full_name || "Unknown",
       items: (submission.inventory_items || []).map((it) => ({
+        itemId: it.id,
         productId: it.product_id,
         productName: it.products?.name || "Unknown product",
         totalPieces: it.normalized_quantity,
@@ -303,6 +304,117 @@ const Store = (() => {
     return data;
   }
 
+  // --- Inventory 2.0: controlled corrections ---
+  // Goes through correct_inventory_item() (schema.sql), not a direct
+  // update — that function recomputes the total from the package size
+  // that applied at the original entry, and writes an immutable log row
+  // preserving what was there before. RLS also enforces admin-only, this
+  // is a second layer, not the boundary.
+  async function correctInventoryItem(itemId, entry, reason) {
+    const { data, error } = await supabaseClient.rpc("correct_inventory_item", {
+      p_item_id: itemId,
+      p_entry_mode: MODE_TO_DB[entry.mode],
+      p_full_boxes: entry.fullBoxes ?? null,
+      p_pieces: entry.pieces ?? null,
+      p_fraction: entry.fraction ?? null,
+      p_reason: reason || null,
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function getInventoryCorrections(itemId) {
+    const { data, error } = await supabaseClient
+      .from("inventory_item_corrections")
+      .select("*")
+      .eq("item_id", itemId)
+      .order("corrected_at", { ascending: false });
+    if (error) throw error;
+    return data;
+  }
+
+  // --- Suppliers (admin-managed, like products/locations) ---
+  async function getAllSuppliers() {
+    const { organization_id } = requireProfile();
+    const { data, error } = await supabaseClient
+      .from("suppliers").select("*").eq("organization_id", organization_id).order("name");
+    if (error) throw error;
+    return data;
+  }
+
+  async function createSupplier(name) {
+    const { organization_id } = requireProfile();
+    const { error } = await supabaseClient.from("suppliers").insert({ organization_id, name });
+    if (error) throw error;
+  }
+
+  async function setSupplierActive(id, active) {
+    const { error } = await supabaseClient.from("suppliers").update({ active }).eq("id", id);
+    if (error) throw error;
+  }
+
+  // --- Delivery Receiving (manual entry — see README: camera/AI
+  // extraction, product matching, and expected-vs-received discrepancy
+  // detection are not implemented; this records what was actually typed
+  // in, atomically, with the same server-side recomputation and
+  // location-scoping guarantees as saveInventory). ---
+  const DELIVERY_SELECT =
+    "id, location_id, supplier_id, received_at, invoice_number, invoice_date, notes, " +
+    "profiles(full_name), suppliers(name), " +
+    "delivery_items(product_id, received_quantity, unit_price, products(name))";
+
+  function toDeliveryRecord(d) {
+    return {
+      id: d.id,
+      locationId: d.location_id,
+      supplierName: d.suppliers?.name || "Unknown supplier",
+      receivedBy: d.profiles?.full_name || "Unknown",
+      receivedAt: new Date(d.received_at).getTime(),
+      invoiceNumber: d.invoice_number,
+      invoiceDate: d.invoice_date,
+      notes: d.notes,
+      items: (d.delivery_items || []).map((it) => ({
+        productName: it.products?.name || "Unknown product",
+        receivedQuantity: it.received_quantity,
+        unitPrice: it.unit_price,
+      })),
+    };
+  }
+
+  async function submitDelivery({ locationId, supplierId, invoiceNumber, invoiceDate, notes, items }) {
+    requireProfile();
+    const payload = items.map((it) => ({
+      product_id: it.productId,
+      entry_mode: MODE_TO_DB[it.entry.mode],
+      entered_full_boxes: it.entry.fullBoxes ?? null,
+      entered_pieces: it.entry.pieces ?? null,
+      entered_fraction: it.entry.fraction ?? null,
+      unit_price: it.unitPrice ?? null,
+    }));
+    const { data, error } = await supabaseClient.rpc("submit_delivery", {
+      p_location_id: locationId,
+      p_supplier_id: supplierId,
+      p_invoice_number: invoiceNumber || null,
+      p_invoice_date: invoiceDate || null,
+      p_notes: notes || null,
+      p_items: payload,
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function getDeliveries({ locationId, limit } = {}) {
+    let query = supabaseClient
+      .from("deliveries")
+      .select(DELIVERY_SELECT)
+      .order("received_at", { ascending: false })
+      .limit(limit ?? (locationId ? 50 : 200));
+    if (locationId) query = query.eq("location_id", locationId);
+    const { data, error } = await query;
+    if (error) throw error;
+    return data.map(toDeliveryRecord);
+  }
+
   return {
     init,
     getProducts,
@@ -328,5 +440,12 @@ const Store = (() => {
     getInvites,
     revokeInvite,
     redeemInvite,
+    correctInventoryItem,
+    getInventoryCorrections,
+    getAllSuppliers,
+    createSupplier,
+    setSupplierActive,
+    submitDelivery,
+    getDeliveries,
   };
 })();

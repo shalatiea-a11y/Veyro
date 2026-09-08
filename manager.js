@@ -2,6 +2,7 @@
 // RLS scopes every query to the signed-in manager's own organization.
 const app = document.getElementById("app");
 let PROFILE = null;
+let currentBranchId = null;
 
 function showError(err) {
   console.error(err);
@@ -39,24 +40,87 @@ async function renderDashboard() {
 }
 
 async function showBranch(locationId) {
+  currentBranchId = locationId;
   app.innerHTML = `<div class="screen"><p class="muted">Loading…</p></div>`;
-  const [locations, records] = await Promise.all([
+  const [locations, records, deliveries] = await Promise.all([
     Store.getLocations(),
     Store.getInventories({ locationId }),
+    Store.getDeliveries({ locationId }),
   ]);
   const loc = locations.find((l) => l.id === locationId);
 
   app.innerHTML = `
     <div class="topbar"><button class="back" onclick="renderDashboard()">←</button><div class="brand">${loc.name}</div></div>
     <div class="screen">
+      <p class="muted">Recent deliveries</p>
+      ${deliveries.length === 0 ? `<p class="muted">None recorded yet.</p>` : deliveries.slice(0, 10).map((d) => `
+        <div class="history-card">
+          <div class="history-head"><span>${d.supplierName}${d.invoiceNumber ? ` — ${d.invoiceNumber}` : ""}</span><span class="muted">by ${d.receivedBy}</span></div>
+          ${d.items.map((it) => `<div class="review-row"><span>${it.productName}</span><span>${it.receivedQuantity} pcs${it.unitPrice != null ? ` @ ${it.unitPrice}` : ""}</span></div>`).join("")}
+        </div>
+      `).join("")}
+
+      <p class="muted" style="margin-top:20px">Inventory history</p>
       ${records.length === 0 ? `<p class="muted">No submissions yet.</p>` : records.map((r) => `
         <div class="history-card">
           <div class="history-head"><span>${r.date}</span><span class="muted">by ${r.employee}</span></div>
-          ${r.items.map((it) => `<div class="review-row"><span>${it.productName}</span><span>${it.totalPieces} pcs</span></div>`).join("")}
+          ${r.items.map((it) => `
+            <div class="review-row">
+              <span>${it.productName}</span>
+              <span style="display:flex;align-items:center;gap:8px">
+                ${it.totalPieces} pcs
+                ${PROFILE?.role === "admin" ? `<button class="pill" onclick="startCorrection('${it.itemId}','${it.productName.replace(/'/g, "\\'")}',${it.totalPieces})" style="padding:4px 10px;font-size:12px">Correct</button>` : ""}
+              </span>
+            </div>
+          `).join("")}
         </div>
       `).join("")}
     </div>
+    <div id="correctionModal"></div>
   `;
+}
+
+// Simple inline correction form — not a full modal component library,
+// just enough to record "was X, should be Y, because Z" without an admin
+// needing raw SQL. Preserved history and audit trail live server-side in
+// correct_inventory_item() / inventory_item_corrections (schema.sql).
+function startCorrection(itemId, productName, currentTotal) {
+  document.getElementById("correctionModal").innerHTML = `
+    <div class="screen" style="position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;padding:0;max-width:none">
+      <div style="background:#fff;border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:480px;margin:0 auto">
+        <h2 style="margin-top:0">Correct ${productName}</h2>
+        <p class="muted">Currently recorded as ${currentTotal} pieces.</p>
+        <label style="font-size:13px;color:#6b7280;font-weight:600">Correct piece count</label>
+        <input id="correctionPieces" type="number" min="0" value="${currentTotal}"
+          style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px">
+        <label style="font-size:13px;color:#6b7280;font-weight:600">Reason (optional but recommended)</label>
+        <input id="correctionReason" placeholder="e.g. Recounted, original count was wrong"
+          style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px">
+        <div style="display:flex;gap:8px">
+          <button class="pill" onclick="document.getElementById('correctionModal').innerHTML=''">Cancel</button>
+          <button class="primary" style="margin-top:0" onclick="submitCorrection('${itemId}')">Save correction</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitCorrection(itemId) {
+  const pieces = Number(document.getElementById("correctionPieces").value);
+  const reason = document.getElementById("correctionReason").value.trim();
+  if (isNaN(pieces) || pieces < 0) return;
+  try {
+    // Corrections are entered as a direct piece count (the simplest,
+    // least error-prone way to fix a number after the fact) rather than
+    // re-deriving boxes/pieces — correct_inventory_item() accepts any
+    // valid entry mode, "pieces" is just the one this UI exposes.
+    await Store.correctInventoryItem(itemId, { mode: "pieces", pieces }, reason);
+    document.getElementById("correctionModal").innerHTML = "";
+    if (currentBranchId) await showBranch(currentBranchId);
+    else await renderDashboard();
+  } catch (err) {
+    showError(err);
+  }
 }
 
 async function boot() {
