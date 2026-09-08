@@ -1,14 +1,18 @@
-// Delivery Receiving — manual entry. NOT built here: camera capture, AI
-// document extraction, product matching, and expected-vs-received
-// discrepancy detection (see README "Known limitations" — those need a
-// real decision about an AI provider and a source of "expected quantity"
-// data that doesn't exist yet; faking either would mean fabricating AI
-// output or invented purchase-order numbers). This records what an
-// employee actually counts off a delivery, structured and atomic — the
-// same server-side-recomputed, location-scoped guarantee as inventory.
+// Delivery Receiving. What IS built: real camera capture (via the
+// browser's native file-input capture, which every mobile browser
+// supports without needing raw getUserMedia stream handling), secure
+// upload to a private per-organization storage folder, and manual entry
+// of what was received. What is NOT built, deliberately: AI reading of
+// the photo, product matching, and expected-vs-received discrepancy
+// detection — see README "What's deliberately not built" for why faking
+// any of those would violate this project's own rules against fabricated
+// AI output and invented data. The photo is stored as supporting
+// evidence attached to a manually-entered delivery, not as an input the
+// system currently interprets.
 const app = document.getElementById("app");
 let LOCATIONS = [], SUPPLIERS = [], PRODUCTS = [];
-let items = []; // { productId, productName, entry, unitPrice }
+let items = []; // { productId, productName, entry, unitPrice, totalPieces }
+let photo = null; // { file, previewUrl, uploadedPath, status: 'idle'|'uploading'|'uploaded'|'failed' }
 
 function currentLocation() {
   const id = Store.getCurrentLocation();
@@ -21,12 +25,19 @@ function showError(err) {
   if (box) { box.textContent = err.message || String(err); box.style.display = "block"; }
 }
 
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // matches the bucket's file_size_limit in schema.sql
+
 function render() {
   const loc = currentLocation();
   app.innerHTML = `
     <div class="topbar"><button class="back" onclick="window.location.href='index.html'">←</button><div class="brand">Delivery Receiving</div></div>
     <div class="screen">
       <p class="muted">Location: <strong>${loc ? loc.name : "none"}</strong></p>
+
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+        <p class="muted" style="margin-top:0">Photo of invoice (optional, kept as a record — not read automatically)</p>
+        ${photoSectionHtml()}
+      </div>
 
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
         <div class="stepper-row"><label>Supplier</label>
@@ -69,9 +80,99 @@ function render() {
       ` : `<p class="muted">No items added yet.</p>`}
 
       <div id="deliveryError" class="muted" style="color:#b91c1c;display:none;margin-top:10px"></div>
-      <button class="primary sticky" ${items.length === 0 ? "disabled" : ""} onclick="submitDelivery()">Submit Delivery (${items.length} items)</button>
+      <button class="primary sticky" ${!canSubmit() ? "disabled" : ""} onclick="submitDelivery()">
+        ${photo && photo.status === "uploading" ? "Uploading photo…" : `Submit Delivery (${items.length} items)`}
+      </button>
     </div>
   `;
+}
+
+function canSubmit() {
+  return items.length > 0 && (!photo || photo.status === "uploaded" || photo.status === "failed");
+}
+
+function photoSectionHtml() {
+  if (!photo) {
+    return `
+      <div style="display:flex;gap:8px">
+        <label class="pill" style="cursor:pointer">
+          📷 Take Photo
+          <input type="file" accept="image/*" capture="environment" onchange="onPhotoSelected(event)" style="display:none">
+        </label>
+        <label class="pill" style="cursor:pointer">
+          Upload from device
+          <input type="file" accept="image/*" onchange="onPhotoSelected(event)" style="display:none">
+        </label>
+      </div>
+    `;
+  }
+  const statusLine = {
+    uploading: `<p class="muted">Uploading…</p>`,
+    uploaded: `<p class="muted" style="color:#15803d">✓ Attached</p>`,
+    failed: `<p class="muted" style="color:#b91c1c">Upload failed — you can still submit without the photo, or retry.</p>`,
+  }[photo.status] || "";
+  return `
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <img src="${photo.previewUrl}" style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb">
+      <div style="flex:1">
+        ${statusLine}
+        <div style="display:flex;gap:8px;margin-top:6px">
+          ${photo.status === "failed" ? `<button class="pill" onclick="retryPhotoUpload()">Retry upload</button>` : ""}
+          <button class="pill" onclick="removePhoto()">Remove photo</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function onPhotoSelected(event) {
+  const file = event.target.files[0];
+  event.target.value = ""; // allow re-selecting the same file later
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    showError(new Error("That file isn't an image. Please choose a photo."));
+    return;
+  }
+  if (file.size > MAX_PHOTO_BYTES) {
+    showError(new Error(`That photo is too large (${(file.size / 1024 / 1024).toFixed(1)} MB) — the limit is 8 MB. Try again with lower camera quality, or retake it.`));
+    return;
+  }
+  document.getElementById("deliveryError").style.display = "none";
+
+  photo = { file, previewUrl: URL.createObjectURL(file), uploadedPath: null, status: "uploading" };
+  render();
+  await uploadCurrentPhoto();
+}
+
+async function uploadCurrentPhoto() {
+  try {
+    const path = await Store.uploadDeliveryDocument(photo.file);
+    photo.uploadedPath = path;
+    photo.status = "uploaded";
+  } catch (err) {
+    console.error(err);
+    photo.status = "failed";
+  }
+  render();
+}
+
+function retryPhotoUpload() {
+  photo.status = "uploading";
+  render();
+  uploadCurrentPhoto();
+}
+
+function removePhoto() {
+  if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
+  // Best-effort cleanup of the already-uploaded object; if this fails
+  // (e.g. offline) it just leaves an orphaned file in storage — no data
+  // integrity impact, since nothing references it once we clear `photo`.
+  if (photo?.uploadedPath) {
+    supabaseClient.storage.from("delivery-documents").remove([photo.uploadedPath]).catch(() => {});
+  }
+  photo = null;
+  render();
 }
 
 function addItem() {
@@ -119,8 +220,11 @@ async function submitDelivery() {
       invoiceDate: new Date().toISOString().slice(0, 10),
       notes: null,
       items,
+      documentPath: photo?.status === "uploaded" ? photo.uploadedPath : null,
     });
+    if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     items = [];
+    photo = null;
     app.innerHTML = `
       <div class="screen center">
         <div class="check">✓</div>

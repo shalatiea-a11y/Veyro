@@ -29,7 +29,8 @@ Honest classification per area (see "Testing" for exactly what each claim rests 
 | Employee/manager UI screens, real Supabase Auth login | **VERIFIED in production** — a real Supabase project was provisioned (project `veyro`), `schema.sql` run against it, an admin account created and confirmed to log in and use the app in a real browser. This is the first capability in this document verified outside this sandbox. |
 | PWA install, offline behavior | **NOT VERIFIED** on a physical device |
 | Delivery receiving (manual entry — see Phase 6) | Backend **VERIFIED** against real Postgres; browser UI **NOT VERIFIED** |
-| Invoice AI extraction, camera capture, product matching, expected-vs-received discrepancy detection | **NOT BUILT** — see Phase 6, "What's deliberately not built" |
+| Camera capture (real photo, via native file-input capture) + secure private-bucket document storage | **VERIFIED** the storage RLS against real Postgres with a Supabase-Storage-schema shim (see Phase 7) — **NOT VERIFIED** in an actual browser/camera |
+| Invoice AI extraction, product matching, expected-vs-received discrepancy detection | **NOT BUILT** — see Phase 6/7, "What's deliberately not built" |
 | Inventory corrections with audit trail (Phase 6) | **VERIFIED** against real Postgres |
 | Suspicious-quantity soft warning (Phase 6) | Code-reviewed only, **NOT VERIFIED** — it's a UI interaction (`window.confirm`), not deterministic logic with a pure function to unit-test |
 | Integrations (Oracle or any other external system), forecasting, ordering assistance | **NOT BUILT** — deliberately deferred; no external system has been identified or verified yet (see Phase 6) |
@@ -367,6 +368,69 @@ even at "foundation" scope.
 tab, the correction modal) in an actual browser — only their underlying
 SQL operations, run directly and confirmed.
 
+### Phase 7: real camera capture + secure document storage (still no AI)
+
+The user reported a real bug: opening Delivery Receiving showed
+`Could not find the table 'public.suppliers' in the schema cache` — the
+Phase 6 migration had never actually been run against the live Supabase
+project (this repo's `schema.sql` was updated, but nothing pushes that to
+a live database automatically; that step is always manual — see Setup).
+Not a code bug, but real feedback that the migration instructions needed
+to be clearer, which they now are (see below).
+
+Separately, the user asked for the full "photograph invoice → AI reads it
+→ review → confirm" workflow. Built the honest subset:
+
+- **Real camera capture**: `delivery.html` now has an actual "Take Photo"
+  control using the browser's native `<input type="file" accept="image/*"
+  capture="environment">` — this opens the device's real camera on every
+  major mobile browser (including Samsung Internet) without needing raw
+  `getUserMedia` stream/permission handling, which is more fragile across
+  browsers. "Upload from device" is a separate fallback input. Client-side
+  validation rejects non-images and files over 8MB with a clear message
+  before attempting upload.
+- **Secure storage**: photos upload to a new *private* Supabase Storage
+  bucket, `delivery-documents`, restricted at the database level (RLS on
+  `storage.objects`, same pattern as every other table) so a path's first
+  segment must equal the caller's own `organization_id` — one org's
+  employee cannot read or write into another org's folder even if they
+  guessed a path. Viewing a photo later uses a short-lived (5-minute)
+  signed URL, never a permanent public link, since the bucket is private.
+- **`deliveries.document_path`**: linked atomically in the same
+  `submit_delivery()` call that creates the delivery (the photo is
+  uploaded to its org folder first — that only needs the org id, not a
+  delivery id yet — then linked once the delivery is created), or
+  attachable/replaceable afterward via a new `attach_delivery_document()`
+  function, restricted to the original recorder or an admin.
+- **Manager visibility**: a "View photo" button in the branch view opens
+  the signed URL.
+
+**What is still, deliberately, not built**: AI reading of the photo,
+product matching, and expected-vs-received discrepancy detection. The
+photo is stored as supporting evidence attached to a manually-entered
+delivery — nothing currently interprets its contents. Building a fake
+version of any of this (a hard-coded "AI" that guesses from the filename,
+invented expected-quantity numbers with no purchase-order source, a
+product-matching UI with nothing real to match against) would be exactly
+what this project's own repeated instructions forbid. It needs the
+product owner to choose a real AI/OCR provider and accept its cost/API-key
+implications — a decision, not an engineering task.
+
+**Verification, honestly**: `storage.objects`/`storage.buckets` don't
+exist in vanilla PostgreSQL — real Supabase installs that schema, this
+sandbox's local test database doesn't. Rather than leave the new RLS
+policies unverified, the local test shim was extended to match Supabase's
+real storage schema and `storage.foldername()` implementation closely
+enough to actually test the logic (not just read it): confirmed an
+employee can upload into their own org's folder, is rejected uploading
+into another org's folder, a rival org sees zero of the first org's
+documents, `submit_delivery()` links a document atomically at creation,
+`attach_delivery_document()` is rejected for an unrelated employee and
+succeeds for the original recorder or an admin. **Not verified**: the
+actual camera/file-input UI, a real upload over a real network, or
+viewing a signed URL — all in an actual browser, which this sandbox
+doesn't have.
+
 ## Architecture
 
 ```
@@ -387,6 +451,15 @@ what the employee entered (`entered_full_boxes`, `entered_pieces`,
 records stay auditable even if a product's package size changes later.
 
 ## Setup
+
+**Important — read this before anything else**: updating `schema.sql` in
+this repo does **not** change your live Supabase database. Nothing does
+that automatically. Every time this file changes, you must copy the new
+SQL and run it yourself in Supabase's SQL Editor — this has already
+caused real confusion once (see Phase 7), so: if a new feature seems
+broken or missing after a code update, check the Supabase SQL Editor
+history first — it's very likely this file has changed and you haven't
+run the new part yet.
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the SQL editor, run `supabase/schema.sql`. This creates the schema,

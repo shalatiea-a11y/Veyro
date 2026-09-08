@@ -359,7 +359,7 @@ const Store = (() => {
   // in, atomically, with the same server-side recomputation and
   // location-scoping guarantees as saveInventory). ---
   const DELIVERY_SELECT =
-    "id, location_id, supplier_id, received_at, invoice_number, invoice_date, notes, " +
+    "id, location_id, supplier_id, received_at, invoice_number, invoice_date, notes, document_path, " +
     "profiles(full_name), suppliers(name), " +
     "delivery_items(product_id, received_quantity, unit_price, products(name))";
 
@@ -373,6 +373,7 @@ const Store = (() => {
       invoiceNumber: d.invoice_number,
       invoiceDate: d.invoice_date,
       notes: d.notes,
+      documentPath: d.document_path,
       items: (d.delivery_items || []).map((it) => ({
         productName: it.products?.name || "Unknown product",
         receivedQuantity: it.received_quantity,
@@ -381,7 +382,7 @@ const Store = (() => {
     };
   }
 
-  async function submitDelivery({ locationId, supplierId, invoiceNumber, invoiceDate, notes, items }) {
+  async function submitDelivery({ locationId, supplierId, invoiceNumber, invoiceDate, notes, items, documentPath }) {
     requireProfile();
     const payload = items.map((it) => ({
       product_id: it.productId,
@@ -398,9 +399,49 @@ const Store = (() => {
       p_invoice_date: invoiceDate || null,
       p_notes: notes || null,
       p_items: payload,
+      p_document_path: documentPath || null,
     });
     if (error) throw error;
     return data;
+  }
+
+  // --- Delivery document photo (camera capture / file upload) ---
+  // Uploaded to Supabase Storage's private "delivery-documents" bucket
+  // (schema.sql) BEFORE the delivery row exists — the org-scoped storage
+  // path doesn't need a delivery id, only the organization id, so the
+  // photo can be captured first and linked in the same submit_delivery()
+  // call once the employee finishes entering items. No AI reads this
+  // photo (see README) — it's stored as supporting evidence for the
+  // manually-entered delivery, viewable later by anyone authorized to see
+  // that org's deliveries.
+  async function uploadDeliveryDocument(file) {
+    const { organization_id } = requireProfile();
+    const ext = (file.name?.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const path = `${organization_id}/${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabaseClient.storage.from("delivery-documents").upload(path, file, {
+      contentType: file.type || "image/jpeg",
+      upsert: false,
+    });
+    if (error) throw error;
+    return path;
+  }
+
+  async function attachDeliveryDocument(deliveryId, path) {
+    const { error } = await supabaseClient.rpc("attach_delivery_document", {
+      p_delivery_id: deliveryId, p_path: path,
+    });
+    if (error) throw error;
+  }
+
+  // Signed URL, not a public link — the bucket is private, so viewing a
+  // photo (even one you're authorized to see) needs a short-lived signed
+  // URL rather than a permanent public path.
+  async function getDeliveryDocumentUrl(path) {
+    const { data, error } = await supabaseClient.storage
+      .from("delivery-documents")
+      .createSignedUrl(path, 300); // 5 minutes — long enough to view, short enough not to matter if it leaks
+    if (error) throw error;
+    return data.signedUrl;
   }
 
   async function getDeliveries({ locationId, limit } = {}) {
@@ -447,5 +488,8 @@ const Store = (() => {
     setSupplierActive,
     submitDelivery,
     getDeliveries,
+    uploadDeliveryDocument,
+    attachDeliveryDocument,
+    getDeliveryDocumentUrl,
   };
 })();

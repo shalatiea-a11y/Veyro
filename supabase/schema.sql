@@ -526,7 +526,13 @@ create table deliveries (
   received_at timestamptz not null default now(),
   invoice_number text,
   invoice_date date,
-  notes text
+  notes text,
+  -- Path into the delivery-documents storage bucket for the photographed
+  -- invoice, e.g. "<organization_id>/<random>.jpg". Null until a photo is
+  -- attached — a delivery is still fully valid without one (manual entry
+  -- must always work; see README "What's deliberately not built" on why
+  -- there's no AI reading of this photo yet).
+  document_path text
 );
 alter table deliveries enable row level security;
 
@@ -563,6 +569,13 @@ create policy "deliveries insert in own org" on deliveries
   for insert with check (organization_id = current_org_id());
 create policy "deliveries admin update" on deliveries
   for update using (organization_id = current_org_id() and current_role_name() = 'admin');
+-- Multiple UPDATE policies on the same table are OR'd together by
+-- Postgres RLS: this lets the employee who recorded a delivery amend it
+-- (attach/replace a photo, fix an invoice number) without needing admin
+-- rights, same as they're trusted to submit it in the first place — while
+-- an admin can still correct anyone's.
+create policy "deliveries receiver can update own delivery" on deliveries
+  for update using (organization_id = current_org_id() and received_by = auth.uid());
 create policy "deliveries admin delete" on deliveries
   for delete using (organization_id = current_org_id() and current_role_name() = 'admin');
 
@@ -588,7 +601,7 @@ create policy "delivery items admin delete" on delivery_items
 -- scoping, and writes the delivery + all items in one transaction.
 create or replace function submit_delivery(
   p_location_id uuid, p_supplier_id uuid, p_invoice_number text,
-  p_invoice_date date, p_notes text, p_items jsonb
+  p_invoice_date date, p_notes text, p_items jsonb, p_document_path text default null
 ) returns uuid
 language plpgsql
 security invoker
@@ -623,8 +636,11 @@ begin
     raise exception 'Supplier does not belong to your organization';
   end if;
 
-  insert into deliveries (organization_id, location_id, supplier_id, received_by, invoice_number, invoice_date, notes)
-  values (v_org_id, p_location_id, p_supplier_id, auth.uid(), p_invoice_number, p_invoice_date, p_notes)
+  -- The document, if any, was already uploaded to storage before this
+  -- call (the upload itself needs no delivery id — see delivery.js) so it
+  -- can be linked in the same insert as everything else, atomically.
+  insert into deliveries (organization_id, location_id, supplier_id, received_by, invoice_number, invoice_date, notes, document_path)
+  values (v_org_id, p_location_id, p_supplier_id, auth.uid(), p_invoice_number, p_invoice_date, p_notes, p_document_path)
   returning id into v_delivery_id;
 
   for v_item in select * from jsonb_array_elements(p_items) loop
@@ -665,6 +681,68 @@ begin
   return v_delivery_id;
 end;
 $$;
+
+-- Attach or replace the photographed invoice on an EXISTING delivery
+-- (e.g. the employee forgot to add it at submit time, or a retake is
+-- needed). Goes through the same organization check as everything else,
+-- plus the "receiver or admin" rule the deliveries UPDATE policies above
+-- already enforce — this function re-checks it explicitly so the error
+-- message is specific rather than a generic RLS denial.
+create or replace function attach_delivery_document(p_delivery_id uuid, p_path text)
+returns void
+language plpgsql
+security invoker
+as $$
+declare
+  v_delivery deliveries%rowtype;
+begin
+  select * into v_delivery from deliveries where id = p_delivery_id and organization_id = current_org_id();
+  if not found then
+    raise exception 'Delivery not found in your organization';
+  end if;
+  if v_delivery.received_by != auth.uid() and current_role_name() != 'admin' then
+    raise exception 'Only the employee who recorded this delivery, or an admin, can attach a document to it';
+  end if;
+  update deliveries set document_path = p_path where id = p_delivery_id;
+end;
+$$;
+
+-- =======================================================================
+-- Delivery document storage (Supabase Storage bucket + access policies).
+-- Private bucket — not public — so a document is only reachable through
+-- an authenticated, authorized request; access is controlled the same
+-- way as every other table here, via RLS on storage.objects. Files are
+-- uploaded to "<organization_id>/<random-name>.<ext>", and the policies
+-- below check that the first path segment matches the caller's own
+-- organization — a user cannot read or write into another org's folder
+-- even if they somehow learn or guess a path.
+-- =======================================================================
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('delivery-documents', 'delivery-documents', false, 8388608, array['image/jpeg', 'image/png', 'image/webp'])
+on conflict (id) do update set
+  file_size_limit = excluded.file_size_limit,
+  allowed_mime_types = excluded.allowed_mime_types;
+
+create policy "org members read own org delivery documents"
+on storage.objects for select
+using (
+  bucket_id = 'delivery-documents'
+  and (storage.foldername(name))[1] = current_org_id()::text
+);
+
+create policy "org members upload to own org delivery documents"
+on storage.objects for insert
+with check (
+  bucket_id = 'delivery-documents'
+  and (storage.foldername(name))[1] = current_org_id()::text
+);
+
+create policy "org members delete own org delivery documents"
+on storage.objects for delete
+using (
+  bucket_id = 'delivery-documents'
+  and (storage.foldername(name))[1] = current_org_id()::text
+);
 
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards

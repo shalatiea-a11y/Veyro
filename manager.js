@@ -57,6 +57,7 @@ async function showBranch(locationId) {
         <div class="history-card">
           <div class="history-head"><span>${d.supplierName}${d.invoiceNumber ? ` — ${d.invoiceNumber}` : ""}</span><span class="muted">by ${d.receivedBy}</span></div>
           ${d.items.map((it) => `<div class="review-row"><span>${it.productName}</span><span>${it.receivedQuantity} pcs${it.unitPrice != null ? ` @ ${it.unitPrice}` : ""}</span></div>`).join("")}
+          ${d.documentPath ? `<button class="pill" onclick="viewDeliveryPhoto('${d.documentPath}')" style="margin-top:8px">View photo</button>` : ""}
         </div>
       `).join("")}
 
@@ -118,6 +119,15 @@ async function submitCorrection(itemId) {
     document.getElementById("correctionModal").innerHTML = "";
     if (currentBranchId) await showBranch(currentBranchId);
     else await renderDashboard();
+  } catch (err) {
+    showError(err);
+  }
+}
+
+async function viewDeliveryPhoto(path) {
+  try {
+    const url = await Store.getDeliveryDocumentUrl(path);
+    window.open(url, "_blank");
   } catch (err) {
     showError(err);
   }
