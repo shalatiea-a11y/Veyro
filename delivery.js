@@ -250,7 +250,16 @@ function emptyState(title, body, actionHtml) {
   `;
 }
 
+// Paints the header immediately, before any network call — this is what
+// makes the tap feel instant instead of a blank/white body while
+// Store.init() and the three data queries below are still in flight.
+// Nothing here depends on data, so it can render synchronously.
+function renderShell() {
+  app.innerHTML = `<div class="topbar"><button class="back" onclick="window.location.href='index.html'">←</button><div class="brand">Delivery Receiving</div></div>`;
+}
+
 async function boot() {
+  renderShell();
   await Auth.requireSession();
   try {
     const profile = await Store.init();

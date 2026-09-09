@@ -348,7 +348,16 @@ async function submitInventory() {
 
 function resetSession() { session = { entries: {} }; }
 
+// Paints a minimal header synchronously, before any network call, so the
+// screen never sits blank/white while boot()'s data queries are in
+// flight. The location switcher and rest of the real Home screen replace
+// this once LOCATIONS has actually loaded.
+function renderShell() {
+  render(`<div class="topbar"><div class="brand">Restaurant Ops</div></div>`);
+}
+
 async function boot() {
+  renderShell();
   await Auth.requireSession();
   try {
     await Store.init();

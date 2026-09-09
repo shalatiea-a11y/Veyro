@@ -242,7 +242,12 @@ async function unassign(profileId, locationId) {
   catch (err) { showError(err); }
 }
 
+function renderShell() {
+  app.innerHTML = `<div class="topbar"><div class="brand">Admin</div></div>`;
+}
+
 async function boot() {
+  renderShell();
   await Auth.requireSession();
   try {
     PROFILE = await Store.init();

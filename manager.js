@@ -190,7 +190,12 @@ async function viewDeliveryPhoto(path) {
   }
 }
 
+function renderShell() {
+  app.innerHTML = `<div class="topbar"><div class="brand">Manager Dashboard</div></div>`;
+}
+
 async function boot() {
+  renderShell();
   await Auth.requireSession();
   try {
     PROFILE = await Store.init();

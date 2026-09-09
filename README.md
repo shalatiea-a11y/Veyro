@@ -911,3 +911,37 @@ Home → Delivery → Admin now, and confirming a fresh code push (like this
 one) still reaches your phone within one or two app opens rather than
 being stuck — reopen the app fully (not just resume it) once after this
 update so the new service worker takes over.
+
+## Phase 10e: fixed the white screen specifically on Delivery Receiving (and other pages)
+
+User reported the white screen was still there, specifically on
+Delivery Receiving, even after the service-worker fix. Investigated and
+found a second, distinct root cause — not a caching problem this time.
+
+**Root cause:** every page's `<body>` is just `<div id="app"></div>` —
+completely empty until JS finishes running. `delivery.js`'s `boot()` had
+to: check the session, call `Store.init()`, then run three parallel
+Supabase queries (locations, suppliers, products) — and only after ALL
+of that resolved did anything get written into `#app`. On a real mobile
+connection those queries take real time, and for that entire time the
+body was blank (background color #f4f5f7, close enough to white to read
+as "white screen"). This is why Delivery specifically stood out — it
+fires more queries up front than the other pages.
+
+**Fix:** added a `renderShell()` to each page's boot() (`app.js`,
+`manager.js`, `admin.js`, `delivery.js`) that paints the topbar/header
+synchronously, before any `await` — so the screen never sits blank while
+the data queries are in flight. The full page (with real data) replaces
+this once it's actually loaded, same as before. This is not a
+loading indicator — it's the app's own header, shown immediately instead
+of after a delay, which is what makes the tap feel instant rather than
+"blank, then everything at once."
+
+**Verified:** all 47 assertions across `npm test` still pass (navigation,
+calculations, and loading/error-state behavior — none of which depended
+on the body being empty during boot). `sw.js` bumped to `rios-v14`.
+
+**NOT VERIFIED:** the actual visual result on your phone — this is
+exactly the kind of fix that needs to be felt, not just read from code.
+Reopen the app fully once so the new service worker + this change take
+effect, then check Delivery Receiving specifically.
