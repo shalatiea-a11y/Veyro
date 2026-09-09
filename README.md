@@ -872,3 +872,42 @@ mobile connection — with no loading UI at all, a genuinely slow request
 (e.g. a bad connection) will now show nothing until it either completes
 or fails, which is what was asked for, but is worth confirming feels
 right in practice rather than jarring.
+
+## Phase 10d: fixed the real cause of the multi-second white screen
+
+The user reported the actual remaining problem clearly: tapping between
+pages showed a blank white screen for a few seconds before anything
+appeared — not a "Loading…" text issue (that was already removed), a
+real network-wait issue.
+
+**Root cause, found by reading `sw.js`, not guessed:** the service
+worker's fetch handler used `fetch(e.request, { cache: "reload" })` for
+every same-origin request — every HTML page, every JS file, the CSS —
+on every single navigation. `{ cache: "reload" }` deliberately forces a
+real network round-trip and explicitly refuses to answer from any cache,
+even the browser's own HTTP cache. That was intentional in Phase 5 to
+stop users getting stuck on stale code, but it means the app could never
+feel instant: every tap between pages paid for a full network fetch of
+the page shell before the browser could even start rendering it,
+regardless of how fast the in-app data loading was.
+
+**Fix:** switched `sw.js` to stale-while-revalidate. A cached file now
+answers immediately (so navigation is instant once the app has been
+opened once), while a background fetch silently refreshes the cache for
+next time — so a real code update still reaches users within a
+navigation or two, without every navigation paying network latency for
+files that haven't changed. `CACHE` bumped to `rios-v13` so this
+actually takes effect (a previously-installed service worker needs this
+version bump to replace itself).
+
+**Verified:** read the diff against the literal caching behavior
+(`cache.match` served directly when present, `fetch` only used to
+refresh in the background) — this is a standard, well-understood
+service-worker pattern, verified by inspection of the exact code path,
+not by claiming a measured speed improvement I can't measure from here.
+
+**NOT VERIFIED — needs your phone:** the actual feel of tapping between
+Home → Delivery → Admin now, and confirming a fresh code push (like this
+one) still reaches your phone within one or two app opens rather than
+being stuck — reopen the app fully (not just resume it) once after this
+update so the new service worker takes over.
