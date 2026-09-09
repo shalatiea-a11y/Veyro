@@ -39,8 +39,10 @@
 <script src="config.js"></script>
 <script src="auth.js"></script>
 <script src="storage.js"></script>
+<script src="ui.js"></script>
 <script>
   document.getElementById("joinBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("joinBtn");
     const code = document.getElementById("code").value.trim().toUpperCase();
     const fullName = document.getElementById("fullName").value.trim();
     const email = document.getElementById("email").value.trim();
@@ -56,32 +58,34 @@
       return;
     }
 
-    const { data, error } = await supabaseClient.auth.signUp({ email, password });
-    if (error) {
+    try {
+      await withBusyButton(btn, async () => {
+        const { data, error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) throw error;
+
+        if (data.session) {
+          // Email confirmation is off for this Supabase project — we already
+          // have a live session, so finish onboarding immediately.
+          try {
+            await Store.redeemInvite(code, fullName);
+            window.location.href = "index.html";
+          } catch (err) {
+            throw new Error("Account created, but the invite code could not be used: " + err.message);
+          }
+        } else {
+          // Email confirmation is required — no session yet. Stash the invite
+          // details (device-local only, not sent anywhere) so join.html can
+          // finish onboarding automatically right after they confirm and log in.
+          try {
+            localStorage.setItem("rios_pending_invite", JSON.stringify({ code, fullName }));
+          } catch (e) { /* localStorage unavailable — they'll just re-enter the code on join.html */ }
+          statusMsg.textContent = "Check your email to confirm your account, then sign in — we'll finish setting up your account automatically.";
+          statusMsg.style.display = "block";
+        }
+      }, { busyText: "Creating account…", doneText: "Done ✓" });
+    } catch (error) {
       errorMsg.textContent = error.message;
       errorMsg.style.display = "block";
-      return;
-    }
-
-    if (data.session) {
-      // Email confirmation is off for this Supabase project — we already
-      // have a live session, so finish onboarding immediately.
-      try {
-        await Store.redeemInvite(code, fullName);
-        window.location.href = "index.html";
-      } catch (err) {
-        errorMsg.textContent = "Account created, but the invite code could not be used: " + err.message;
-        errorMsg.style.display = "block";
-      }
-    } else {
-      // Email confirmation is required — no session yet. Stash the invite
-      // details (device-local only, not sent anywhere) so join.html can
-      // finish onboarding automatically right after they confirm and log in.
-      try {
-        localStorage.setItem("rios_pending_invite", JSON.stringify({ code, fullName }));
-      } catch (e) { /* localStorage unavailable — they'll just re-enter the code on join.html */ }
-      statusMsg.textContent = "Check your email to confirm your account, then sign in — we'll finish setting up your account automatically.";
-      statusMsg.style.display = "block";
     }
   });
 </script>

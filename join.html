@@ -30,6 +30,7 @@
 <script src="config.js"></script>
 <script src="auth.js"></script>
 <script src="storage.js"></script>
+<script src="ui.js"></script>
 <script>
   (async () => {
     await Auth.requireSession();
@@ -45,6 +46,7 @@
   document.getElementById("signOutLink").addEventListener("click", (e) => { e.preventDefault(); Auth.signOut(); });
 
   document.getElementById("finishBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("finishBtn");
     const code = document.getElementById("code").value.trim().toUpperCase();
     const fullName = document.getElementById("fullName").value.trim();
     const errorMsg = document.getElementById("errorMsg");
@@ -55,7 +57,7 @@
       return;
     }
     try {
-      await Store.redeemInvite(code, fullName);
+      await withBusyButton(btn, () => Store.redeemInvite(code, fullName), { busyText: "Finishing…", doneText: "Done ✓" });
       try { localStorage.removeItem("rios_pending_invite"); } catch (e) {}
       window.location.href = "index.html";
     } catch (err) {

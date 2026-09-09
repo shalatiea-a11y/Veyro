@@ -792,3 +792,43 @@ right threshold on the user's actual network conditions (Wi-Fi vs.
 mobile data); whether the offline banner appears/disappears correctly
 when physically toggling airplane mode; visual polish of `loadingScreen()`
 /`errorScreen()` alongside each page's existing styling.
+
+## Phase 10b: online-vs-server status, and auth-page button feedback
+
+Follow-up on the same loading-architecture request, closing two gaps found
+by re-checking the spec against what Phase 10 actually shipped:
+
+1. **The connectivity badge only distinguished "internet"**, and only
+   showed up when offline. The spec explicitly asks for internet vs.
+   server to be distinguishable, and for the indicator to be visible
+   (not just appear on failure). Fixed: `ui.js` now tracks two real
+   signals separately — `navigator.onLine`/online/offline events for
+   internet, and a `serverReachable` flag updated by `reportApiOutcome()`,
+   which `runAsyncView()` and `withBusyButton()` now call after every real
+   request. A small "✓ Online" / "⚠ Connection problem" / "⚠ Offline" pill
+   sits in the corner at all times. No polling was added — the signal
+   rides on requests the app was already making. A normal app-level error
+   (duplicate submission, RLS denial) does NOT flip the server flag; only
+   a genuine fetch-level failure (`Failed to fetch` / `NetworkError`)
+   does, so the badge can't be tripped by ordinary business errors —
+   verified in `tests/loading.test.js` with both cases.
+2. **login.html/signup.html/join.html had no button feedback at all** —
+   their Sign In / Create Account / Finish buttons never disabled or
+   showed progress, so double-tapping them could fire the request twice.
+   These pages didn't even load `ui.js`. Fixed: all three now load
+   `ui.js` and wrap their submit logic in `withBusyButton()` (Signing in…,
+   Creating account…, Finishing…), which also serves as the double-submit
+   guard. `delivery.js`'s `boot()` also picked up the same delay-threshold
+   treatment as the other pages (was previously an unconditional loading
+   render), plus a Retry button on failure instead of a dead-end error
+   message.
+
+**Verified:** `npm test` — 44/44 assertions pass, including 3 new ones in
+`tests/loading.test.js` that drive the real `reportApiOutcome()`/badge
+logic (not hand-traced) to prove the business-error-vs-network-error
+distinction actually holds. `sw.js` bumped to `rios-v11`.
+
+**NOT VERIFIED:** how the badge looks/positions on an actual small phone
+screen (it's a fixed top-right pill and could overlap a page's own
+topbar content on some screen widths — worth a manual check); real-device
+airplane-mode toggling.

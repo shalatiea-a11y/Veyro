@@ -15,6 +15,7 @@ const dom = new JSDOM(`<!DOCTYPE html><body><div id="app"></div></body>`, {
 });
 const { window } = dom;
 window.eval(fs.readFileSync(path.join(__dirname, "..", "ui.js"), "utf8"));
+window.initConnectivityBadge(); // DOMContentLoaded already fired before eval in this harness
 
 const app = window.document.getElementById("app");
 const results = [];
@@ -61,6 +62,34 @@ async function run() {
   await new Promise((r) => setTimeout(r, 20));
   check("clicking Retry re-runs load and renders the recovered result", app.textContent.includes("recovered"));
   check("Retry actually called load() a second time", attempts === 2);
+
+  // 4. Online/server badge: two distinct signals, never conflated. A
+  // real business error (not a network failure) must NOT flip the server
+  // badge to "Connection problem" — only an actual fetch-level failure does.
+  app.innerHTML = "";
+  await window.runAsyncView(app, {
+    load: () => Promise.reject(new Error("duplicate key value violates unique constraint")),
+    render: () => {},
+    delayMs: 150,
+  });
+  check("a business-logic error leaves the badge 'Online' (not a connectivity signal)",
+    window.document.getElementById("connBadge").textContent === "✓ Online");
+
+  await window.runAsyncView(app, {
+    load: () => Promise.reject(new Error("Failed to fetch")),
+    render: () => {},
+    delayMs: 150,
+  });
+  check("a genuine network failure flips the badge to 'Connection problem'",
+    window.document.getElementById("connBadge").textContent === "⚠ Connection problem");
+
+  await window.runAsyncView(app, {
+    load: () => Promise.resolve("ok"),
+    render: () => {},
+    delayMs: 150,
+  });
+  check("a subsequent successful round-trip clears the connection problem",
+    window.document.getElementById("connBadge").textContent === "✓ Online");
 
   results.forEach((r) => console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.label}`));
   const failed = results.filter((r) => !r.pass);
