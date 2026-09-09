@@ -68,9 +68,7 @@ const views = {
   async home({ force = false } = {}) {
     const loc = currentLocation();
     const isFresh = !force && homeStatusCache.locationId === loc.id;
-    if (!isFresh) render(`<div class="screen"><p class="muted">Loading…</p></div>`);
-    const existing = await loadHomeStatus(loc, { force });
-    render(`
+    const renderHome = (existing) => render(`
       <div class="topbar">
         <div class="brand">Restaurant Ops</div>
         <button class="pill" onclick="go('locationPicker')">${loc.name} ▾</button>
@@ -98,6 +96,14 @@ const views = {
         </div>
       </div>
     `);
+    if (isFresh) {
+      renderHome(homeStatusCache.existing);
+      return;
+    }
+    await runAsyncView(app, {
+      load: () => loadHomeStatus(loc, { force }),
+      render: renderHome,
+    });
   },
 
   async locationPicker() {
@@ -276,20 +282,21 @@ const views = {
   },
 
   async history() {
-    render(`<div class="screen"><p class="muted">Loading…</p></div>`);
     const loc = currentLocation();
-    const records = await Store.getInventories({ locationId: loc.id });
-    render(`
-      <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Previous Inventory</div></div>
-      <div class="screen">
-        ${records.length === 0 ? `<p class="muted">No submissions yet.</p>` : records.map((r) => `
-          <div class="history-card">
-            <div class="history-head"><span>${r.date}</span><span class="muted">${r.items.length} products</span></div>
-            <div class="muted">By ${r.employee}</div>
-          </div>
-        `).join("")}
-      </div>
-    `);
+    await runAsyncView(app, {
+      load: () => Store.getInventories({ locationId: loc.id }),
+      render: (records) => render(`
+        <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Previous Inventory</div></div>
+        <div class="screen">
+          ${records.length === 0 ? `<p class="muted">No submissions yet.</p>` : records.map((r) => `
+            <div class="history-card">
+              <div class="history-head"><span>${r.date}</span><span class="muted">${r.items.length} products</span></div>
+              <div class="muted">By ${r.employee}</div>
+            </div>
+          `).join("")}
+        </div>
+      `),
+    });
   },
 };
 

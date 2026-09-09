@@ -8,7 +8,7 @@ const dom = new JSDOM(`<!DOCTYPE html><body><div id="app"></div></body>`, {
 const { window } = dom;
 
 window.Auth = { requireSession: async () => ({}), signOut: () => {} };
-window.withBusyButton = async (btn, fn) => fn();
+window.eval(fs.readFileSync(require("path").join(__dirname, "..", "ui.js"), "utf8"));
 window.Store = {
   init: async () => ({ role: "admin" }),
   getLocations: async () => ([{ id: "loc1", name: "Downtown" }, { id: "loc2", name: "Airport" }]),

@@ -708,3 +708,87 @@ end-to-end.
 5. Discrepancy detection (expected vs. actual)
 6. Integrations with the customer's existing systems (only after their
    exact platform and API capabilities are verified)
+
+## Phase 10: loading architecture — root causes, not cosmetics
+
+Investigated by grepping every literal "Loading…" render (9 occurrences
+across app.js, manager.js, admin.js, delivery.js) and reading each one's
+surrounding code, rather than guessing where loading felt excessive.
+
+**Root causes found:**
+1. **Real "stuck on Loading forever" bugs** in `manager.js`'s
+   `renderDashboard()` and `showBranch()` — both replaced `#app` with
+   "Loading…" then awaited a `Promise.all([...])` with **zero try/catch**.
+   Any rejection (a dropped connection, an RLS error) left that screen
+   showing the literal word "Loading…" with no way out except reloading
+   the page. Same bug, partially present, in `admin.js`: its catch handler
+   wrote the error into a separate banner but never touched `#adminBody`,
+   so the tab content itself stayed stuck on "Loading…" beneath the error
+   line.
+2. **No delay threshold anywhere.** Every async view painted "Loading…"
+   the instant a fetch started, even for requests that resolve in a few
+   tens of milliseconds on a normal connection — this is the concrete
+   cause of loading feeling like it showed up on "almost every screen":
+   it did, regardless of how fast the request actually was.
+3. `app.js`'s Home screen already had targeted caching (Phase 9) so this
+   was less severe there, but its cache-miss path still had no delay
+   threshold and no error handling — a failed fetch would leave Home
+   stuck too.
+4. `delivery.js`'s `boot()` already wrapped everything in try/catch and
+   rendered a real error screen on failure — checked directly, not
+   assumed; no fix needed there.
+
+**What changed:**
+- Added three small shared helpers to `ui.js`: `loadingScreen()` (a
+  centered spinner, not a bare text string), `errorScreen()` (message +
+  Retry button), and `runAsyncView(container, { load, render, delayMs })`
+  — starts a `delayMs` (default 150ms) timer before painting the loading
+  screen at all, cancels it if `load()` resolves first, and on rejection
+  renders Retry wired to re-run the exact same `load`+`render` pair
+  instead of leaving whatever was on screen (usually "Loading…") stuck.
+- Rewired `app.js`'s `history()` and `home()` views, and `manager.js`'s
+  `renderDashboard()`/`showBranch()`, to go through `runAsyncView()`.
+  This is the actual fix for both the flash-of-loading complaint (fast
+  requests now render directly, no threshold crossed) and the stuck-
+  loading bug (every one of these paths now has real error+retry).
+- Fixed `admin.js`'s `showError()` to also replace `#adminBody`'s content
+  with `errorScreen()` + a working Retry button, and gave tab-switching
+  the same delay-threshold treatment.
+- Added a real, non-fabricated online/offline banner (`initConnectivityBadge()`
+  in `ui.js`) driven only by `navigator.onLine` and the browser's
+  `online`/`offline` events — no polling, no fake "server status," and it
+  stays hidden while online so it's not a permanent distraction. This is
+  intentionally the internet-connectivity signal only; distinguishing
+  "backend down but internet fine" would need a real health-check
+  endpoint that doesn't exist yet, so that distinction was not
+  fabricated.
+- `sw.js`'s `CACHE` bumped to `rios-v10` so the service worker actually
+  serves these changes instead of a stale cached bundle.
+
+**What was NOT changed, on purpose:** the existing offline/cache fallback
+in `sw.js` (network-first with a cache fallback) is untouched — this
+phase's brief was online-first with a loading fix, not building offline
+sync. The Android Back / history-based navigation from Phase 9 is
+untouched; it already worked and this phase didn't need to touch it.
+Nothing about auth, orgs, products, team, inventory math, suppliers,
+delivery receiving, or the manager dashboard's data/business logic was
+rebuilt — only the loading/error rendering around existing fetches.
+
+**Verification:** added `tests/loading.test.js`, which loads the real
+`ui.js` into a real jsdom DOM and drives `runAsyncView()` directly —
+proving (not asserting from reading code) that a fast call never shows
+the loading screen, a slow call shows it only after the threshold, and a
+rejected call never leaves the container stuck on "Loading…" and Retry
+actually re-invokes the same load. Re-ran the existing Phase 9 navigation
+tests (`navigation-employee.test.js`, `navigation-manager.test.js`) after
+wiring their mocked `window` to load the real `ui.js` too, since `app.js`/
+`manager.js` now depend on it — all pass unmodified in behavior (21/21).
+Total: 41/41 assertions pass (`npm test`) — VERIFIED as real executed
+test coverage of the loading/error/retry state machine, not hand-tracing.
+
+**NOT VERIFIED (needs manual phone testing):** how the spinner and Retry
+button actually look and feel on a real device; whether 150ms is the
+right threshold on the user's actual network conditions (Wi-Fi vs.
+mobile data); whether the offline banner appears/disappears correctly
+when physically toggling airplane mode; visual polish of `loadingScreen()`
+/`errorScreen()` alongside each page's existing styling.

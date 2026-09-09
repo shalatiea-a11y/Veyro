@@ -29,13 +29,17 @@ window.addEventListener("popstate", (e) => {
 });
 
 async function renderDashboard() {
-  app.innerHTML = `<div class="screen"><p class="muted">Loading…</p></div>`;
-  const [locations, todaysRecords, deliveries] = await Promise.all([
-    Store.getLocations(),
-    Store.todaysInventories(),
-    Store.getDeliveries(),
-  ]);
+  await runAsyncView(app, {
+    load: () => Promise.all([
+      Store.getLocations(),
+      Store.todaysInventories(),
+      Store.getDeliveries(),
+    ]),
+    render: ([locations, todaysRecords, deliveries]) => renderDashboardBody(locations, todaysRecords, deliveries),
+  });
+}
 
+function renderDashboardBody(locations, todaysRecords, deliveries) {
   const rows = locations.map((loc) => ({
     loc,
     record: todaysRecords.find((r) => r.locationId === loc.id),
@@ -88,12 +92,17 @@ async function renderDashboard() {
 
 async function showBranch(locationId) {
   currentBranchId = locationId;
-  app.innerHTML = `<div class="screen"><p class="muted">Loading…</p></div>`;
-  const [locations, records, deliveries] = await Promise.all([
-    Store.getLocations(),
-    Store.getInventories({ locationId }),
-    Store.getDeliveries({ locationId }),
-  ]);
+  await runAsyncView(app, {
+    load: () => Promise.all([
+      Store.getLocations(),
+      Store.getInventories({ locationId }),
+      Store.getDeliveries({ locationId }),
+    ]),
+    render: ([locations, records, deliveries]) => renderBranchBody(locations, locationId, records, deliveries),
+  });
+}
+
+function renderBranchBody(locations, locationId, records, deliveries) {
   const loc = locations.find((l) => l.id === locationId);
 
   app.innerHTML = `

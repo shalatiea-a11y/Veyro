@@ -6,6 +6,6 @@
     "jsdom": "^24.0.0"
   },
   "scripts": {
-    "test": "node tests/calculations.test.js && node tests/navigation-employee.test.js && node tests/navigation-manager.test.js"
+    "test": "node tests/calculations.test.js && node tests/navigation-employee.test.js && node tests/navigation-manager.test.js && node tests/loading.test.js"
   }
 }

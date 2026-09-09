@@ -17,6 +17,16 @@ function showError(err) {
     box.textContent = err.message || String(err);
     box.style.display = "block";
   }
+  // Without this, a failed fetch left #adminBody showing the literal text
+  // "Loading…" forever — the error banner above it was the only visible
+  // sign anything went wrong, and there was no way to retry short of
+  // switching tabs and back.
+  const body = document.getElementById("adminBody");
+  if (body) {
+    body.innerHTML = errorScreen(err.message || String(err));
+    const btn = body.querySelector(".retry-btn");
+    if (btn) btn.onclick = () => render();
+  }
 }
 
 async function render() {
@@ -33,18 +43,28 @@ async function render() {
         <button class="tab ${tab === "team" ? "active" : ""}" data-tab="team">Team</button>
       </div>
       <div id="adminError" class="muted" style="color:#b91c1c;display:none;margin-bottom:12px"></div>
-      <div id="adminBody"><p class="muted">Loading…</p></div>
+      <div id="adminBody"></div>
     </div>
   `;
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.onclick = () => { tab = btn.dataset.tab; render(); };
   });
+  // Only paint a loading screen if the tab's data is still loading after
+  // the threshold — switching tabs on a fast connection now renders the
+  // new tab's content immediately with no visible "Loading…" flash.
+  const body = document.getElementById("adminBody");
+  let settled = false;
+  const timer = setTimeout(() => { if (!settled) body.innerHTML = loadingScreen(); }, 150);
   try {
     if (tab === "products") await renderProducts();
     else if (tab === "locations") await renderLocations();
     else if (tab === "suppliers") await renderSuppliers();
     else await renderTeam();
+    settled = true;
+    clearTimeout(timer);
   } catch (err) {
+    settled = true;
+    clearTimeout(timer);
     showError(err);
   }
 }

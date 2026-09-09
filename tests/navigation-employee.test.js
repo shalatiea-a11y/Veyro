@@ -14,7 +14,7 @@ const { window } = dom;
 
 // Mocks for everything app.js expects to exist already (auth.js, storage.js).
 window.Auth = { requireSession: async () => ({}), signOut: () => {} };
-window.withBusyButton = async (btn, fn) => fn();
+window.eval(fs.readFileSync(require("path").join(__dirname, "..", "ui.js"), "utf8"));
 window.Store = {
   init: async () => ({ role: "employee" }),
   getProducts: async () => ([
