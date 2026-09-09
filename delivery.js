@@ -285,6 +285,24 @@ async function boot() {
       }
       return;
     }
+    // Without this check, addItem() would crash on an empty <select> (no
+    // active products -> PRODUCTS.find() returns undefined -> reading
+    // undefined.name throws) with no visible error, just a dead button.
+    if (PRODUCTS.length === 0) {
+      if (profile.role === "admin") {
+        emptyState(
+          "No products configured",
+          "Add at least one product before receiving a delivery.",
+          `<button class="primary" onclick="window.location.href='admin.html?tab=products'">Add Product</button>`
+        );
+      } else {
+        emptyState(
+          "No products configured",
+          "Ask an administrator to configure at least one product before you can receive a delivery."
+        );
+      }
+      return;
+    }
     render();
   } catch (err) {
     console.error(err);

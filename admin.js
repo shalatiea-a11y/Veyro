@@ -6,7 +6,9 @@
 // update" policies), not this page's role check below.
 const app = document.getElementById("app");
 let PROFILE = null;
-let tab = new URLSearchParams(location.search).get("tab") || "products";
+const VALID_TABS = ["products", "locations", "suppliers", "team"];
+const requestedTab = new URLSearchParams(location.search).get("tab");
+let tab = VALID_TABS.includes(requestedTab) ? requestedTab : "products";
 
 function showError(err) {
   console.error(err);
