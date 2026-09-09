@@ -945,3 +945,43 @@ on the body being empty during boot). `sw.js` bumped to `rios-v14`.
 exactly the kind of fix that needs to be felt, not just read from code.
 Reopen the app fully once so the new service worker + this change take
 effect, then check Delivery Receiving specifically.
+
+## Phase 10f: found and fixed the actual render-blocking cause of the white screen
+
+User reported the white screen was STILL there after both prior fixes
+(service-worker caching, and painting a shell before data loads). Kept
+investigating instead of tuning the same two fixes again, and found the
+real cause this time — not a JS/data problem at all.
+
+**Root cause:** every single page (`index.html`, `delivery.html`,
+`admin.html`, `manager.html`, `login.html`, `signup.html`, `join.html`)
+had `<script src=".../supabase-js@2/.../supabase.min.js"></script>` —
+the Supabase SDK, loaded from a third-party CDN — placed in `<head>`,
+with no `async`/`defer`. A plain `<script>` tag like that is
+render-blocking: the browser cannot parse or paint anything in `<body>`
+— not even the empty `#app` div, not even its background color — until
+that external file has been fetched from the CDN, parsed, and executed.
+Every one of the fixes in Phases 10c–10e (removing loading text, the
+service-worker cache strategy, painting a shell early) only run AFTER
+this blocking script finishes, so none of them could touch this delay.
+This is exactly the kind of root cause that "just tune the loading
+indicator" can never fix — the page genuinely could not paint anything
+yet.
+
+**Fix:** moved that `<script>` tag out of `<head>` and into `<body>`,
+right before `config.js` (which is the first script that depends on
+`window.supabase` existing). Execution order is unchanged — scripts
+still run top-to-bottom in the same sequence — but the browser can now
+parse and paint the page's HTML/CSS (including the shell from Phase 10e)
+immediately, without waiting on a cross-origin network fetch first.
+
+**Verified:** confirmed by direct inspection of every HTML file that the
+tag now sits after `<div id="app">`/the page's static markup and before
+`config.js`, in all 7 pages. All 47 `npm test` assertions still pass
+(this change is markup-only, so it doesn't touch any tested JS
+behavior). `sw.js` bumped to `rios-v15`.
+
+**NOT VERIFIED:** the actual improvement on your phone, especially on a
+real mobile data connection where the CDN fetch is slowest and this fix
+matters most. Reopen the app fully once for the new service worker to
+take over, then try Delivery Receiving again.
