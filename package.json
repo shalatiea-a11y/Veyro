@@ -1,0 +1,11 @@
+{
+  "name": "veyro-tests",
+  "private": true,
+  "description": "Dev-only test dependencies. The app itself ships no build step and no runtime dependencies — this file exists only so tests/navigation-*.test.js can drive the real app.js/manager.js inside a real DOM (jsdom) instead of hand-tracing the logic.",
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  },
+  "scripts": {
+    "test": "node tests/calculations.test.js && node tests/navigation-employee.test.js && node tests/navigation-manager.test.js"
+  }
+}

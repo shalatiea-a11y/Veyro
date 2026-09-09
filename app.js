@@ -12,21 +12,64 @@ function currentLocation() {
   return LOCATIONS.find((l) => l.id === id) || LOCATIONS[0];
 }
 
+// In-app navigation history. Without this, every go() call just
+// overwrites #app's contents in place — the browser never learns a new
+// "page" happened, so the entire Home->Inventory->Category->Product
+// drill-down was a SINGLE history entry. Pressing Android/browser Back
+// from three screens deep skipped straight past all of it to whatever
+// page was open before this one (often exiting the PWA entirely). Each
+// go() now pushes a real history entry; Back replays the previous one
+// via popstate. Only once there's no in-app entry left does Back fall
+// through to actual browser/OS back behavior, which is the correct rule.
 async function go(view, ...args) {
+  history.pushState({ view, args }, "", "#" + view);
   await views[view](...args);
   window.scrollTo(0, 0);
 }
+
+window.addEventListener("popstate", (e) => {
+  if (e.state && views[e.state.view]) {
+    views[e.state.view](...(e.state.args || []));
+    window.scrollTo(0, 0);
+  }
+  // No state means we've fallen off the front of our own history stack —
+  // let the browser handle Back normally (leave the page) rather than
+  // guessing at a fallback view.
+});
 
 function showError(err) {
   console.error(err);
   render(`<div class="screen"><p class="muted" style="color:#b91c1c">Something went wrong: ${err.message || err}</p></div>`);
 }
 
+// Caches the "has this location's inventory been submitted today"
+// lookup by location id. Without this, every return to Home — including
+// just pressing Back from Categories, which needs no fresh data at all —
+// re-ran the same query and repainted a full "Loading…" screen first.
+// That's the concrete cause of the app feeling like "tap -> Loading ->
+// Loading" the report describes: two loading screens back to back (the
+// generic boot one, then this one) for data that hadn't changed. Now
+// it's fetched once per location and reused; a fresh fetch only happens
+// when the location changes (different cache key) or right after a
+// submission (explicitly invalidated below), which are the only two
+// moments the answer can actually be different.
+let homeStatusCache = { locationId: null, existing: null };
+
+async function loadHomeStatus(loc, { force = false } = {}) {
+  if (!force && homeStatusCache.locationId === loc.id) {
+    return homeStatusCache.existing;
+  }
+  const existing = await Store.todaysInventory(loc.id);
+  homeStatusCache = { locationId: loc.id, existing };
+  return existing;
+}
+
 const views = {
-  async home() {
-    render(`<div class="screen"><p class="muted">Loading…</p></div>`);
+  async home({ force = false } = {}) {
     const loc = currentLocation();
-    const existing = await Store.todaysInventory(loc.id);
+    const isFresh = !force && homeStatusCache.locationId === loc.id;
+    if (!isFresh) render(`<div class="screen"><p class="muted">Loading…</p></div>`);
+    const existing = await loadHomeStatus(loc, { force });
     render(`
       <div class="topbar">
         <div class="brand">Restaurant Ops</div>
@@ -227,7 +270,7 @@ const views = {
         <div class="check">✓</div>
         <h1>Inventory submitted</h1>
         <p class="muted">${count} products recorded for ${currentLocation().name}</p>
-        <button class="primary" onclick="resetSession(); go('home')">Back to Home</button>
+        <button class="primary" onclick="resetSession(); go('home', { force: true })">Back to Home</button>
       </div>
     `);
   },
@@ -317,7 +360,16 @@ async function boot() {
     if (LOCATIONS.length === 0) {
       throw new Error("No locations configured for your organization yet.");
     }
-    go("home");
+    // Prefetch while the boot screen's "Loading…" is already showing, so
+    // the first Home render doesn't need a second loading flash right
+    // after this one (see loadHomeStatus above).
+    await loadHomeStatus(currentLocation());
+    // replaceState, not go()'s pushState: this is the initial view for
+    // this page load, not a navigation the user took — it shouldn't add
+    // an extra Back step on top of whatever brought them to index.html.
+    history.replaceState({ view: "home", args: [] }, "", "#home");
+    await views.home();
+    window.scrollTo(0, 0);
   } catch (err) {
     showError(err);
   }

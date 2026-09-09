@@ -473,6 +473,83 @@ correctly, whether the dashboard's new section is legible on a phone.
 No SQL changed this phase, so the Postgres-verified guarantees from
 Phases 1–7 are unaffected.
 
+### Phase 9: real Android Back behavior + the actual cause of double "Loading…"
+
+Inspected rather than assumed. The architecture is multiple separate HTML
+documents (`index.html`, `manager.html`, `delivery.html`, `admin.html`),
+and within `index.html`/`manager.html` a small hand-rolled router
+(`go()`/`views` in `app.js`, `renderDashboard()`/`showBranch()` in
+`manager.js`) that swaps `#app`'s contents without ever touching browser
+history. That's the root cause of both reported problems, not two
+unrelated bugs:
+
+- **Android Back exiting the app**: `Home → Categories → Product` was a
+  *single* history entry (nothing ever called `pushState`), so Back from
+  three screens deep skipped past all of it to whatever page opened
+  `index.html` — often exiting the PWA. Fixed by having `go()` push a
+  real history entry per screen change, with a `popstate` listener that
+  replays the matching view. The same fix went into `manager.js`'s
+  Dashboard↔Branch drill-down (`goDashboard()`/`goBranch()`), which had
+  the identical shape of bug. The visible "←" buttons now call
+  `history.back()` instead of re-rendering directly, so they stay in
+  sync with whatever the hardware Back button does.
+- **Double "Loading…"**: traced to `views.home()` unconditionally
+  re-fetching "has this location submitted today" and repainting a full
+  loading screen *every single time* the employee returned to Home —
+  including just pressing Back from Categories, where nothing about that
+  answer could have changed. Fixed with `homeStatusCache`, keyed by
+  location id: a fresh fetch only happens when the location actually
+  changes (different cache key, so no special-casing needed — a location
+  switch naturally misses the cache) or right after a submission
+  (explicitly passed `{ force: true }`, since the answer *did* just
+  change). Plain back-and-forth navigation between Home and other
+  in-app screens no longer re-fetches or re-shows a loading screen at
+  all. The manager dashboard's equivalent screens (Dashboard/Branch)
+  deliberately do **not** get this caching — a manager returning to the
+  dashboard wants current numbers, not a stale snapshot from before they
+  looked at a branch; that refetch is correct behavior, not the bug.
+
+What was **not** changed, on purpose: this is still multiple separate
+HTML documents, not a true single-page app. Navigating between
+`index.html`, `delivery.html`, `admin.html`, and `manager.html` is a real
+browser navigation and always was — which is *why* Back between those
+pages already worked correctly (the browser's own history handles it) and
+didn't need fixing. Turning this into one unified SPA would be a genuine
+rewrite of the app's architecture for a problem that doesn't currently
+exist; per this phase's own instruction not to rebuild working
+functionality without a concrete reason, that wasn't done.
+
+**Verified — for real, not by inspection alone**: this sandbox has no
+browser, but it does have Node, so a real test harness was built using
+`jsdom` (added as a dev-only dependency, see `package.json` — the app
+itself still ships zero runtime dependencies and no build step) that
+loads the actual `app.js`/`manager.js` source into a real DOM with a real
+History API and drives it exactly like a user would:
+`tests/navigation-employee.test.js` boots the app, walks
+Home→Categories→ProductList→ProductEntry, confirms each step pushed
+exactly one history entry, then calls `history.back()` three times and
+confirms it lands on ProductList, then Categories, then Home — not
+outside the app — and confirms returning to Home this way triggers zero
+additional data fetches, while switching location correctly does trigger
+one. `tests/navigation-manager.test.js` does the equivalent for
+Dashboard↔Branch, including confirming the dashboard *does* refresh on
+return (intentional, not a regression). All 14+7 assertions pass. This is
+the strongest verification standard used anywhere in this document so
+far for frontend logic — a real state machine actually exercised — but
+it is still not the same as an actual phone: it cannot confirm how a
+transition *looks*, whether a real Android "back gesture" (vs. an
+in-browser Back button) fires the same `popstate` event identically
+across Chrome/Samsung Internet, or timing/animation feel.
+
+**Not done this phase, and why**: eliminating the fetch cost of
+navigating *between* separate HTML pages (`index.html` → `delivery.html`,
+etc.) — each is a full document load, so each re-runs
+`Auth.requireSession()` and `Store.init()`'s profile lookup from scratch.
+That's real, but fixing it means merging pages into one document (the
+rewrite explicitly ruled out above), not a targeted fix like the two
+above. Flagged as a known limitation rather than worked around with
+something less honest.
+
 ## Architecture
 
 ```
@@ -566,10 +643,19 @@ real employees — see the phased roadmap in the product vision doc.
 
 ## Testing
 
-Run `node tests/calculations.test.js` for the pure calculation logic
-(19 cases: worked spec examples, fractions, missing/empty input, unknown
-modes, large numbers, and the negative-input boundary between UI clamping
-and calculation logic).
+Run `npm install && npm test` to run everything (calculation logic +
+navigation state machines — see Phase 9). `npm install` is only needed
+for `jsdom`, a dev-only test dependency; the app itself has none.
+
+- `node tests/calculations.test.js` — pure calculation logic (19 cases:
+  worked spec examples, fractions, missing/empty input, unknown modes,
+  large numbers, and the negative-input boundary between UI clamping and
+  calculation logic).
+- `node tests/navigation-employee.test.js` / `navigation-manager.test.js`
+  — load the real `app.js`/`manager.js` into a real DOM (jsdom) and drive
+  actual navigation + `history.back()`, verifying Android Back walks
+  screens instead of exiting and that redundant data fetches were
+  eliminated without breaking legitimate ones (21 assertions).
 
 The RLS/multi-tenancy/atomicity claims above were verified against a real
 local PostgreSQL 16 instance with a shim for Supabase's `auth.uid()` — see

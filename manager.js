@@ -9,6 +9,25 @@ function showError(err) {
   app.innerHTML = `<div class="screen"><p class="muted" style="color:#b91c1c">Something went wrong: ${err.message || err}</p></div>`;
 }
 
+// Same in-app navigation history problem and fix as app.js: Dashboard ->
+// Branch was a single history entry, so Back from a branch view skipped
+// past the dashboard entirely. goBranch()/goDashboard() push real
+// entries; the visible "←" button uses history.back() so it stays in
+// sync with whatever the browser's Back button would also do.
+async function goDashboard() {
+  history.pushState({ view: "dashboard" }, "", "#dashboard");
+  await renderDashboard();
+}
+async function goBranch(locationId) {
+  history.pushState({ view: "branch", locationId }, "", "#branch");
+  await showBranch(locationId);
+}
+window.addEventListener("popstate", (e) => {
+  if (!e.state) return;
+  if (e.state.view === "branch") showBranch(e.state.locationId);
+  else renderDashboard();
+});
+
 async function renderDashboard() {
   app.innerHTML = `<div class="screen"><p class="muted">Loading…</p></div>`;
   const [locations, todaysRecords, deliveries] = await Promise.all([
@@ -49,7 +68,7 @@ async function renderDashboard() {
       ${needsAttention.length > 0 ? `
         <p class="muted" style="margin-top:20px">Needs attention</p>
         ${needsAttention.map(({ loc }) => `
-          <button class="branch-card" onclick="showBranch('${loc.id}')">
+          <button class="branch-card" onclick="goBranch('${loc.id}')">
             <span class="branch-name">${loc.name}</span>
             <span class="badge red">Inventory not started</span>
           </button>
@@ -58,7 +77,7 @@ async function renderDashboard() {
 
       <p class="muted" style="margin-top:20px">All branches</p>
       ${rows.map(({ loc, record }) => `
-        <button class="branch-card" onclick="showBranch('${loc.id}')">
+        <button class="branch-card" onclick="goBranch('${loc.id}')">
           <span class="branch-name">${loc.name}</span>
           <span class="badge ${record ? "green" : "red"}">${record ? "Complete" : "Missing inventory"}</span>
         </button>
@@ -78,7 +97,7 @@ async function showBranch(locationId) {
   const loc = locations.find((l) => l.id === locationId);
 
   app.innerHTML = `
-    <div class="topbar"><button class="back" onclick="renderDashboard()">←</button><div class="brand">${loc.name}</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${loc.name}</div></div>
     <div class="screen">
       <p class="muted">Recent deliveries</p>
       ${deliveries.length === 0 ? `<p class="muted">None recorded yet.</p>` : deliveries.slice(0, 10).map((d) => `
@@ -176,6 +195,7 @@ async function boot() {
       app.innerHTML = `<div class="screen"><p class="muted">Manager or admin access required.</p></div>`;
       return;
     }
+    history.replaceState({ view: "dashboard" }, "", "#dashboard");
     renderDashboard();
   } catch (err) {
     showError(err);
