@@ -32,6 +32,11 @@ window.Store = {
   normalizeQuantity: (p, entry) => (Number(entry.fullBoxes) || 0) * p.unitsPerBox + (Number(entry.pieces) || 0),
   saveInventory: async () => "sub-id",
   getInventories: async () => ([]),
+  getAllSuppliersCalls: 0,
+  getAllSuppliers: async function () {
+    window.Store.getAllSuppliersCalls++;
+    return [{ id: "sup1", name: "Fresh Foods Co", active: true }];
+  },
 };
 
 const code = fs.readFileSync(require("path").join(__dirname, "..", "app.js"), "utf8");
@@ -91,6 +96,27 @@ async function run() {
   await new Promise((r) => setTimeout(r, 20));
   check("switching location DOES trigger a fresh fetch", window.Store.todaysInventoryCalls === 2);
   check("current location actually changed", window.Store.getCurrentLocation() === "loc2");
+
+  // Delivery Receiving used to be a full page navigation (window.location.href
+  // = 'delivery.html'), which is exactly what produced the white-screen
+  // complaint no loading-UI fix could touch. It's now a normal go() view —
+  // same in-memory screen swap, same real history entry, same Back behavior
+  // as every other screen, with no document reload at all.
+  await window.go("home", { force: true });
+  await window.go("delivery");
+  check("Delivery opens as an in-app view (a real history entry, not a page navigation)",
+    currentPath() === "#delivery");
+  check("suppliers are fetched lazily on first visit to Delivery", window.Store.getAllSuppliersCalls === 1);
+  check("Delivery screen actually rendered (supplier select present)",
+    !!window.document.getElementById("supplier"));
+
+  window.history.back();
+  await new Promise((r) => setTimeout(r, 20));
+  check("Back from Delivery returns to Home (still in-app, not exiting)", currentPath() === "#home");
+
+  await window.go("delivery");
+  check("returning to Delivery does NOT refetch suppliers (no unnecessary duplicate request)",
+    window.Store.getAllSuppliersCalls === 1);
 
   results.forEach((r) => console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.label}`));
   const failed = results.filter((r) => !r.pass);

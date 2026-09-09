@@ -4,6 +4,29 @@ let session = { entries: {} }; // productId -> { mode, fullBoxes, pieces, fracti
 let PRODUCTS = [];
 let LOCATIONS = [];
 let CATEGORIES = [];
+let PROFILE = null;
+
+// Delivery Receiving used to be its own HTML document (delivery.html),
+// reached via a full browser navigation. That navigation — unload this
+// page, load a new one — is exactly what produced the white screen the
+// user kept reporting even after every other loading/caching fix: none
+// of those fixes could touch it, because the delay was the navigation
+// itself, not anything our code renders. Moving it in here as a normal
+// go()/views entry, like Categories or History, removes the navigation
+// entirely — "opening" Delivery is now the same in-memory screen swap as
+// every other in-app screen, with no document reload at all.
+let SUPPLIERS = null; // null = not fetched yet; fetched once, lazily, on first visit
+let deliveryItems = [];
+let deliveryPhoto = null; // { file, previewUrl, uploadedPath, status: 'idle'|'uploading'|'uploaded'|'failed' }
+const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // matches the bucket's file_size_limit in schema.sql
+
+async function ensureSuppliers() {
+  if (SUPPLIERS === null) {
+    const all = await Store.getAllSuppliers();
+    SUPPLIERS = all.filter((s) => s.active);
+  }
+  return SUPPLIERS;
+}
 
 function render(html) { app.innerHTML = html; }
 
@@ -83,7 +106,7 @@ const views = {
             <span class="task-label">Morning Inventory</span>
             <span class="task-status">${existing ? "Completed" : "Start"}</span>
           </button>
-          <button class="task-card" onclick="window.location.href='delivery.html'">
+          <button class="task-card" onclick="go('delivery')">
             <span class="dot blue"></span>
             <span class="task-label">Delivery Receiving</span>
             <span class="task-status">Record delivery</span>
@@ -298,7 +321,274 @@ const views = {
       `),
     });
   },
+
+  async delivery() {
+    await ensureSuppliers();
+    if (LOCATIONS.length === 0) {
+      renderEmptyState("Delivery Receiving",
+        "No location assigned",
+        "You're not assigned to any location yet. Ask an administrator to assign you one (Admin → Team)."
+      );
+      return;
+    }
+    if (SUPPLIERS.length === 0) {
+      renderEmptyState("Delivery Receiving",
+        "No suppliers configured",
+        PROFILE?.role === "admin"
+          ? "Add a supplier before receiving your first delivery."
+          : "Ask an administrator to add a supplier before you can receive a delivery.",
+        PROFILE?.role === "admin"
+          ? `<button class="primary" onclick="window.location.href='admin.html?tab=suppliers'">Add Supplier</button>`
+          : ""
+      );
+      return;
+    }
+    // Without this check, addDeliveryItem() would crash on an empty
+    // <select> (no active products -> PRODUCTS.find() returns undefined
+    // -> reading undefined.name throws) with no visible error.
+    if (PRODUCTS.length === 0) {
+      renderEmptyState("Delivery Receiving",
+        "No products configured",
+        PROFILE?.role === "admin"
+          ? "Add at least one product before receiving a delivery."
+          : "Ask an administrator to configure at least one product before you can receive a delivery.",
+        PROFILE?.role === "admin"
+          ? `<button class="primary" onclick="window.location.href='admin.html?tab=products'">Add Product</button>`
+          : ""
+      );
+      return;
+    }
+    renderDelivery();
+  },
 };
+
+function renderEmptyState(brand, title, body, actionHtml) {
+  render(`
+    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">${brand}</div></div>
+    <div class="screen center" style="padding-top:60px">
+      <h1 style="font-size:20px">${title}</h1>
+      <p class="muted">${body}</p>
+      ${actionHtml || ""}
+    </div>
+  `);
+}
+
+function deliveryCurrentLocation() { return currentLocation(); }
+
+function canSubmitDelivery() {
+  return deliveryItems.length > 0 && (!deliveryPhoto || deliveryPhoto.status === "uploaded" || deliveryPhoto.status === "failed");
+}
+
+function deliveryPhotoSectionHtml() {
+  if (!deliveryPhoto) {
+    return `
+      <div style="display:flex;gap:8px">
+        <label class="pill" style="cursor:pointer">
+          📷 Take Photo
+          <input type="file" accept="image/*" capture="environment" onchange="onDeliveryPhotoSelected(event)" style="display:none">
+        </label>
+        <label class="pill" style="cursor:pointer">
+          Upload from device
+          <input type="file" accept="image/*" onchange="onDeliveryPhotoSelected(event)" style="display:none">
+        </label>
+      </div>
+    `;
+  }
+  const statusLine = {
+    uploading: `<p class="muted">Uploading…</p>`,
+    uploaded: `<p class="muted" style="color:#15803d">✓ Attached</p>`,
+    failed: `<p class="muted" style="color:#b91c1c">Upload failed — you can still submit without the photo, or retry.</p>`,
+  }[deliveryPhoto.status] || "";
+  return `
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <img src="${deliveryPhoto.previewUrl}" style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid #e5e7eb">
+      <div style="flex:1">
+        ${statusLine}
+        <div style="display:flex;gap:8px;margin-top:6px">
+          ${deliveryPhoto.status === "failed" ? `<button class="pill" onclick="retryDeliveryPhotoUpload()">Retry upload</button>` : ""}
+          <button class="pill" onclick="removeDeliveryPhoto()">Remove photo</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDelivery() {
+  const loc = deliveryCurrentLocation();
+  render(`
+    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery Receiving</div></div>
+    <div class="screen">
+      <p class="muted">Location: <strong>${loc ? loc.name : "none"}</strong></p>
+
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+        <p class="muted" style="margin-top:0">Photo of invoice (optional, kept as a record — not read automatically)</p>
+        ${deliveryPhotoSectionHtml()}
+      </div>
+
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+        <div class="stepper-row"><label>Supplier</label>
+          <select id="supplier" style="flex:1;margin-left:12px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+            ${SUPPLIERS.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")}
+          </select>
+        </div>
+        <div class="stepper-row"><label>Invoice #</label>
+          <input id="invoiceNumber" style="flex:1;margin-left:12px;padding:8px;border:1px solid #e5e7eb;border-radius:8px" placeholder="optional">
+        </div>
+      </div>
+
+      <p class="muted">Add what was received</p>
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+        <div class="stepper-row"><label>Product</label>
+          <select id="deliveryProduct" style="flex:1;margin-left:12px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+            ${PRODUCTS.map((p) => `<option value="${p.id}">${p.name} (1 ${p.unit} = ${p.unitsPerBox} pcs)</option>`).join("")}
+          </select>
+        </div>
+        <div class="stepper-row"><label>Full boxes</label>
+          <input id="deliveryFullBoxes" type="number" min="0" value="0" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+        </div>
+        <div class="stepper-row"><label>Pieces</label>
+          <input id="deliveryPieces" type="number" min="0" value="0" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+        </div>
+        <div class="stepper-row"><label>Unit price (optional)</label>
+          <input id="deliveryUnitPrice" type="number" min="0" step="0.01" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+        </div>
+        <button class="pill" onclick="addDeliveryItem()" style="margin-top:8px">Add to delivery</button>
+      </div>
+
+      ${deliveryItems.length ? `
+        <p class="muted">Items in this delivery</p>
+        ${deliveryItems.map((it, i) => `
+          <div class="review-row">
+            <span>${it.productName} — ${it.totalPieces} pcs${it.unitPrice != null ? ` @ ${it.unitPrice}` : ""}</span>
+            <button onclick="removeDeliveryItem(${i})" style="border:none;background:none;color:#b91c1c;cursor:pointer">Remove</button>
+          </div>
+        `).join("")}
+      ` : `<p class="muted">No items added yet.</p>`}
+
+      <div id="deliveryError" class="muted" style="color:#b91c1c;display:none;margin-top:10px"></div>
+      <button id="submitDeliveryBtn" class="primary sticky" ${!canSubmitDelivery() ? "disabled" : ""} onclick="submitDelivery()">
+        ${deliveryPhoto && deliveryPhoto.status === "uploading" ? "Uploading photo…" : `Submit Delivery (${deliveryItems.length} items)`}
+      </button>
+    </div>
+  `);
+}
+
+function showDeliveryError(err) {
+  console.error(err);
+  const box = document.getElementById("deliveryError");
+  if (box) { box.textContent = err.message || String(err); box.style.display = "block"; }
+}
+
+async function onDeliveryPhotoSelected(event) {
+  const file = event.target.files[0];
+  event.target.value = ""; // allow re-selecting the same file later
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    showDeliveryError(new Error("That file isn't an image. Please choose a photo."));
+    return;
+  }
+  if (file.size > MAX_PHOTO_BYTES) {
+    showDeliveryError(new Error(`That photo is too large (${(file.size / 1024 / 1024).toFixed(1)} MB) — the limit is 8 MB. Try again with lower camera quality, or retake it.`));
+    return;
+  }
+  document.getElementById("deliveryError").style.display = "none";
+
+  deliveryPhoto = { file, previewUrl: URL.createObjectURL(file), uploadedPath: null, status: "uploading" };
+  renderDelivery();
+  await uploadCurrentDeliveryPhoto();
+}
+
+async function uploadCurrentDeliveryPhoto() {
+  try {
+    const path = await Store.uploadDeliveryDocument(deliveryPhoto.file);
+    deliveryPhoto.uploadedPath = path;
+    deliveryPhoto.status = "uploaded";
+  } catch (err) {
+    console.error(err);
+    deliveryPhoto.status = "failed";
+  }
+  renderDelivery();
+}
+
+function retryDeliveryPhotoUpload() {
+  deliveryPhoto.status = "uploading";
+  renderDelivery();
+  uploadCurrentDeliveryPhoto();
+}
+
+function removeDeliveryPhoto() {
+  if (deliveryPhoto?.previewUrl) URL.revokeObjectURL(deliveryPhoto.previewUrl);
+  if (deliveryPhoto?.uploadedPath) {
+    supabaseClient.storage.from("delivery-documents").remove([deliveryPhoto.uploadedPath]).catch(() => {});
+  }
+  deliveryPhoto = null;
+  renderDelivery();
+}
+
+function addDeliveryItem() {
+  const productId = document.getElementById("deliveryProduct").value;
+  const product = PRODUCTS.find((p) => p.id === productId);
+  const fullBoxes = Number(document.getElementById("deliveryFullBoxes").value) || 0;
+  const pieces = Number(document.getElementById("deliveryPieces").value) || 0;
+  const unitPriceRaw = document.getElementById("deliveryUnitPrice").value;
+  const unitPrice = unitPriceRaw === "" ? null : Number(unitPriceRaw);
+
+  if (fullBoxes === 0 && pieces === 0) {
+    showDeliveryError(new Error("Enter at least one box or piece before adding."));
+    return;
+  }
+  document.getElementById("deliveryError").style.display = "none";
+  const entry = { mode: "boxes+pieces", fullBoxes, pieces };
+  deliveryItems.push({
+    productId,
+    productName: product.name,
+    entry,
+    unitPrice,
+    totalPieces: Store.normalizeQuantity(product, entry),
+  });
+  renderDelivery();
+}
+
+function removeDeliveryItem(index) {
+  deliveryItems.splice(index, 1);
+  renderDelivery();
+}
+
+async function submitDelivery() {
+  const loc = deliveryCurrentLocation();
+  const supplierId = document.getElementById("supplier").value;
+  const invoiceNumber = document.getElementById("invoiceNumber").value.trim();
+  if (!supplierId) {
+    showDeliveryError(new Error("Select a supplier first."));
+    return;
+  }
+  const btn = document.getElementById("submitDeliveryBtn");
+  try {
+    await withBusyButton(btn, () => Store.submitDelivery({
+      locationId: loc.id,
+      supplierId,
+      invoiceNumber,
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      notes: null,
+      items: deliveryItems,
+      documentPath: deliveryPhoto?.status === "uploaded" ? deliveryPhoto.uploadedPath : null,
+    }), { busyText: "Confirming…", doneText: "Confirmed ✓" });
+    if (deliveryPhoto?.previewUrl) URL.revokeObjectURL(deliveryPhoto.previewUrl);
+    deliveryItems = [];
+    deliveryPhoto = null;
+    render(`
+      <div class="screen center">
+        <div class="check">✓</div>
+        <h1>Delivery recorded</h1>
+        <p class="muted">Saved for ${loc.name}</p>
+        <button class="primary" onclick="go('home', { force: true })">Back to Home</button>
+      </div>
+    `);
+  } catch (err) {
+    showDeliveryError(err);
+  }
+}
 
 // A soft sanity check, not a hard limit — some restaurants genuinely order
 // in bulk. Never silently changes what the employee entered; it just asks
@@ -360,7 +650,7 @@ async function boot() {
   renderShell();
   await Auth.requireSession();
   try {
-    await Store.init();
+    PROFILE = await Store.init();
     [PRODUCTS, LOCATIONS] = await Promise.all([Store.getProducts(), Store.getLocations()]);
     CATEGORIES = [...new Set(PRODUCTS.map((p) => p.category))];
     // The cached location id is a device-local preference, not org data —

@@ -985,3 +985,46 @@ behavior). `sw.js` bumped to `rios-v15`.
 real mobile data connection where the CDN fetch is slowest and this fix
 matters most. Reopen the app fully once for the new service worker to
 take over, then try Delivery Receiving again.
+
+## Phase 10g: merged Delivery Receiving into the SPA — removed the page navigation itself
+
+Three fixes in (caching, render-blocking script, shell painting) and the
+user reported the same white screen again on Delivery Receiving
+specifically. Every prior fix targeted things that happen DURING a page
+load — but the actual remaining cause was the page load itself:
+Delivery Receiving was still `delivery.html`, a separate HTML document,
+reached from Home via `window.location.href = 'delivery.html'`. That is
+a real full browser navigation — unload the current document, load a
+new one — and browsers/PWAs can show a blank frame during that
+transition no matter how fast the new page's own code runs. No amount
+of caching or render-order fixing on the destination page can remove a
+delay that happens before that page even starts loading.
+
+**Fix:** merged Delivery Receiving into `app.js` as a normal `go()`/`views`
+entry — the same mechanism Categories, Product Entry, and History already
+use. Opening Delivery from Home is now `go('delivery')`: an in-memory
+screen swap with a real history entry (so Back still works correctly),
+not a document reload. `delivery.html` and `delivery.js` were deleted —
+their logic (camera capture, photo upload, item entry, `submit_delivery()`
+call) moved in as-is, reusing `app.js`'s already-loaded `PRODUCTS`/
+`LOCATIONS` instead of re-fetching them, and fetching suppliers once,
+lazily, on first visit (cached for the rest of the session — leaving and
+returning to Delivery does not refetch). This also removes a real
+duplicate request that existed before: the old `delivery.js` called
+`Store.getAllProducts()` and filtered client-side, when `app.js` had
+already fetched the same active products via `Store.getProducts()`
+moments earlier during boot.
+
+**Verified:** extended `tests/navigation-employee.test.js` with 5 new
+assertions proving (not asserting from reading) that Delivery now opens
+as a real in-app view with an actual history entry, that Back from it
+returns to Home without leaving the app, and that suppliers are fetched
+exactly once even after leaving and returning. 52/52 total assertions
+pass via `npm test`. `sw.js`'s asset list updated (delivery.html/
+delivery.js removed) and bumped to `rios-v16`.
+
+**NOT VERIFIED:** the actual feel on your phone. This is the fix that
+should finally remove the white screen on Delivery specifically, since
+it's the first one that removes the page navigation itself rather than
+speeding up what happens during it. Reopen the app fully once, then try
+Home → Delivery Receiving again.
