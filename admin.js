@@ -6,7 +6,7 @@
 // update" policies), not this page's role check below.
 const app = document.getElementById("app");
 let PROFILE = null;
-let tab = "products";
+let tab = new URLSearchParams(location.search).get("tab") || "products";
 
 function showError(err) {
   console.error(err);
@@ -68,11 +68,12 @@ async function renderProducts() {
   document.getElementById("productForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
+    const btn = e.target.querySelector("button[type=submit]");
     try {
-      await Store.createProduct({
+      await withBusyButton(btn, () => Store.createProduct({
         name: f.get("name"), category: f.get("category"),
         packageUnit: f.get("packageUnit"), unitsPerPackage: Number(f.get("unitsPerPackage")),
-      });
+      }), { busyText: "Adding…", doneText: "Added ✓" });
       await renderProducts();
     } catch (err) { showError(err); }
   });
@@ -101,8 +102,11 @@ async function renderLocations() {
   document.getElementById("locationForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    try { await Store.createLocation({ name: f.get("name") }); await renderLocations(); }
-    catch (err) { showError(err); }
+    const btn = e.target.querySelector("button[type=submit]");
+    try {
+      await withBusyButton(btn, () => Store.createLocation({ name: f.get("name") }), { busyText: "Adding…", doneText: "Added ✓" });
+      await renderLocations();
+    } catch (err) { showError(err); }
   });
 }
 
@@ -129,8 +133,11 @@ async function renderSuppliers() {
   document.getElementById("supplierForm").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    try { await Store.createSupplier(f.get("name")); await renderSuppliers(); }
-    catch (err) { showError(err); }
+    const btn = e.target.querySelector("button[type=submit]");
+    try {
+      await withBusyButton(btn, () => Store.createSupplier(f.get("name")), { busyText: "Adding…", doneText: "Added ✓" });
+      await renderSuppliers();
+    } catch (err) { showError(err); }
   });
 }
 
@@ -153,7 +160,7 @@ async function renderTeam() {
           <option value="manager">Manager</option>
           <option value="admin">Admin</option>
         </select>
-        <button class="pill" onclick="createInvite()">Generate code</button>
+        <button id="createInviteBtn" class="pill" onclick="createInvite()">Generate code</button>
       </div>
       <p class="muted" style="margin-top:10px">Share the code with them (in person, chat, etc). They enter it at signup.html along with their own email and password — no SQL access needed. Codes expire after 7 days and work once.</p>
       <div id="newInviteCode"></div>
@@ -196,8 +203,9 @@ async function renderTeam() {
 
 async function createInvite() {
   const role = document.getElementById("inviteRole").value;
+  const btn = document.getElementById("createInviteBtn");
   try {
-    const code = await Store.createInvite(role);
+    const code = await withBusyButton(btn, () => Store.createInvite(role), { busyText: "Generating…", doneText: "Generated ✓" });
     document.getElementById("newInviteCode").innerHTML =
       `<div class="total-card" style="margin-top:10px"><span>New code (${role})</span><span class="total-val">${code}</span></div>`;
     // Don't full re-render yet — that would wipe the code we just showed;

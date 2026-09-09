@@ -80,7 +80,7 @@ function render() {
       ` : `<p class="muted">No items added yet.</p>`}
 
       <div id="deliveryError" class="muted" style="color:#b91c1c;display:none;margin-top:10px"></div>
-      <button class="primary sticky" ${!canSubmit() ? "disabled" : ""} onclick="submitDelivery()">
+      <button id="submitDeliveryBtn" class="primary sticky" ${!canSubmit() ? "disabled" : ""} onclick="submitDelivery()">
         ${photo && photo.status === "uploading" ? "Uploading photo…" : `Submit Delivery (${items.length} items)`}
       </button>
     </div>
@@ -212,8 +212,9 @@ async function submitDelivery() {
     showError(new Error("Select a supplier first."));
     return;
   }
+  const btn = document.getElementById("submitDeliveryBtn");
   try {
-    await Store.submitDelivery({
+    await withBusyButton(btn, () => Store.submitDelivery({
       locationId: loc.id,
       supplierId,
       invoiceNumber,
@@ -221,7 +222,7 @@ async function submitDelivery() {
       notes: null,
       items,
       documentPath: photo?.status === "uploaded" ? photo.uploadedPath : null,
-    });
+    }), { busyText: "Confirming…", doneText: "Confirmed ✓" });
     if (photo?.previewUrl) URL.revokeObjectURL(photo.previewUrl);
     items = [];
     photo = null;
@@ -238,11 +239,22 @@ async function submitDelivery() {
   }
 }
 
+function emptyState(title, body, actionHtml) {
+  app.innerHTML = `
+    <div class="topbar"><button class="back" onclick="window.location.href='index.html'">←</button><div class="brand">Delivery Receiving</div></div>
+    <div class="screen center" style="padding-top:60px">
+      <h1 style="font-size:20px">${title}</h1>
+      <p class="muted">${body}</p>
+      ${actionHtml || ""}
+    </div>
+  `;
+}
+
 async function boot() {
   await Auth.requireSession();
   app.innerHTML = `<div class="screen"><p class="muted">Loading…</p></div>`;
   try {
-    await Store.init();
+    const profile = await Store.init();
     [LOCATIONS, SUPPLIERS, PRODUCTS] = await Promise.all([
       Store.getLocations(),
       Store.getAllSuppliers(),
@@ -250,8 +262,29 @@ async function boot() {
     ]);
     SUPPLIERS = SUPPLIERS.filter((s) => s.active);
     PRODUCTS = PRODUCTS.filter((p) => p.active);
-    if (LOCATIONS.length === 0) throw new Error("No locations available to you yet.");
-    if (SUPPLIERS.length === 0) throw new Error("No suppliers configured yet — an admin needs to add one first (Admin → Suppliers).");
+
+    if (LOCATIONS.length === 0) {
+      emptyState(
+        "No location assigned",
+        "You're not assigned to any location yet. Ask an administrator to assign you one (Admin → Team)."
+      );
+      return;
+    }
+    if (SUPPLIERS.length === 0) {
+      if (profile.role === "admin") {
+        emptyState(
+          "No suppliers configured",
+          "Add a supplier before receiving your first delivery.",
+          `<button class="primary" onclick="window.location.href='admin.html?tab=suppliers'">Add Supplier</button>`
+        );
+      } else {
+        emptyState(
+          "No suppliers configured",
+          "Ask an administrator to add a supplier before you can receive a delivery."
+        );
+      }
+      return;
+    }
     render();
   } catch (err) {
     console.error(err);

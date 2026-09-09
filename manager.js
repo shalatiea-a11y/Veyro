@@ -11,13 +11,27 @@ function showError(err) {
 
 async function renderDashboard() {
   app.innerHTML = `<div class="screen"><p class="muted">Loading…</p></div>`;
-  const [locations, todaysRecords] = await Promise.all([Store.getLocations(), Store.todaysInventories()]);
+  const [locations, todaysRecords, deliveries] = await Promise.all([
+    Store.getLocations(),
+    Store.todaysInventories(),
+    Store.getDeliveries(),
+  ]);
 
   const rows = locations.map((loc) => ({
     loc,
     record: todaysRecords.find((r) => r.locationId === loc.id),
   }));
   const completeCount = rows.filter((r) => r.record).length;
+  const missing = rows.filter((r) => !r.record);
+  const today = new Date().toISOString().slice(0, 10);
+  const deliveriesToday = deliveries.filter((d) => new Date(d.receivedAt).toISOString().slice(0, 10) === today);
+
+  // Only real, currently-available signals go here — no invented
+  // discrepancy/review counts, since that data doesn't exist yet (no AI
+  // extraction, no expected-vs-received comparison built). "Needs
+  // attention" today means exactly one thing: a location that hasn't
+  // counted inventory yet.
+  const needsAttention = missing;
 
   app.innerHTML = `
     <div class="topbar">
@@ -27,8 +41,22 @@ async function renderDashboard() {
     </div>
     <div class="screen">
       <h1>Today's Status</h1>
-      <div class="mgr-status"><span class="status-chip">Inventory: ${completeCount}/${rows.length} completed</span></div>
-      <p class="muted">Branches</p>
+      <div class="mgr-status">
+        <span class="status-chip">Inventory: ${completeCount}/${rows.length} completed</span>
+        <span class="status-chip">Deliveries today: ${deliveriesToday.length}</span>
+      </div>
+
+      ${needsAttention.length > 0 ? `
+        <p class="muted" style="margin-top:20px">Needs attention</p>
+        ${needsAttention.map(({ loc }) => `
+          <button class="branch-card" onclick="showBranch('${loc.id}')">
+            <span class="branch-name">${loc.name}</span>
+            <span class="badge red">Inventory not started</span>
+          </button>
+        `).join("")}
+      ` : `<p class="muted" style="margin-top:20px;color:#15803d">✓ Nothing needs attention right now.</p>`}
+
+      <p class="muted" style="margin-top:20px">All branches</p>
       ${rows.map(({ loc, record }) => `
         <button class="branch-card" onclick="showBranch('${loc.id}')">
           <span class="branch-name">${loc.name}</span>
@@ -99,7 +127,7 @@ function startCorrection(itemId, productName, currentTotal) {
           style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px">
         <div style="display:flex;gap:8px">
           <button class="pill" onclick="document.getElementById('correctionModal').innerHTML=''">Cancel</button>
-          <button class="primary" style="margin-top:0" onclick="submitCorrection('${itemId}')">Save correction</button>
+          <button id="saveCorrectionBtn" class="primary" style="margin-top:0" onclick="submitCorrection('${itemId}')">Save correction</button>
         </div>
       </div>
     </div>
@@ -110,12 +138,13 @@ async function submitCorrection(itemId) {
   const pieces = Number(document.getElementById("correctionPieces").value);
   const reason = document.getElementById("correctionReason").value.trim();
   if (isNaN(pieces) || pieces < 0) return;
+  const btn = document.getElementById("saveCorrectionBtn");
   try {
     // Corrections are entered as a direct piece count (the simplest,
     // least error-prone way to fix a number after the fact) rather than
     // re-deriving boxes/pieces — correct_inventory_item() accepts any
     // valid entry mode, "pieces" is just the one this UI exposes.
-    await Store.correctInventoryItem(itemId, { mode: "pieces", pieces }, reason);
+    await withBusyButton(btn, () => Store.correctInventoryItem(itemId, { mode: "pieces", pieces }, reason), { busyText: "Saving…", doneText: "Saved ✓" });
     document.getElementById("correctionModal").innerHTML = "";
     if (currentBranchId) await showBranch(currentBranchId);
     else await renderDashboard();

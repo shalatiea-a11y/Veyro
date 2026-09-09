@@ -216,7 +216,7 @@ const views = {
         ${rows.length === 0 ? `<p class="muted">No products entered yet.</p>` : rows.map((r) => `
           <div class="review-row"><span>${r.p.name}</span><span>${r.total} pcs</span></div>
         `).join("")}
-        <button class="primary sticky" ${rows.length === 0 ? "disabled" : ""} onclick="submitInventory()">Submit Inventory</button>
+        <button id="submitInventoryBtn" class="primary sticky" ${rows.length === 0 ? "disabled" : ""} onclick="submitInventory()">Submit Inventory</button>
       </div>
     `);
   },
@@ -279,12 +279,13 @@ async function submitInventory() {
     productId: pid,
     entry: session.entries[pid],
   }));
+  const btn = document.getElementById("submitInventoryBtn");
   try {
-    await Store.saveInventory({
+    await withBusyButton(btn, () => Store.saveInventory({
       locationId: loc.id,
       date: new Date().toISOString().slice(0, 10),
       items,
-    });
+    }), { busyText: "Submitting…", doneText: "Submitted ✓" });
     go("done", items.length);
   } catch (err) {
     if (String(err.message || "").includes("duplicate key")) {
