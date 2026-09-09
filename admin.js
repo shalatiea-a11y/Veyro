@@ -49,22 +49,12 @@ async function render() {
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.onclick = () => { tab = btn.dataset.tab; render(); };
   });
-  // Only paint a loading screen if the tab's data is still loading after
-  // the threshold — switching tabs on a fast connection now renders the
-  // new tab's content immediately with no visible "Loading…" flash.
-  const body = document.getElementById("adminBody");
-  let settled = false;
-  const timer = setTimeout(() => { if (!settled) body.innerHTML = loadingScreen(); }, 150);
   try {
     if (tab === "products") await renderProducts();
     else if (tab === "locations") await renderLocations();
     else if (tab === "suppliers") await renderSuppliers();
     else await renderTeam();
-    settled = true;
-    clearTimeout(timer);
   } catch (err) {
-    settled = true;
-    clearTimeout(timer);
     showError(err);
   }
 }

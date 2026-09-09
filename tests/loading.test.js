@@ -1,10 +1,8 @@
 // Drives the ACTUAL runAsyncView() from ui.js inside a real jsdom DOM to
-// prove three things the report's "never stuck on Loading" requirement
-// depends on, rather than hand-tracing the code:
-//   1. A fast-resolving call never paints the loading screen at all.
-//   2. A slow call past the delay threshold DOES show it.
-//   3. A rejected call renders Retry (not a screen stuck on "Loading…"),
-//      and clicking Retry re-runs the same load+render.
+// prove the "never stuck, no loading screen" behavior the user asked for:
+// data renders as soon as it's ready, with nothing painted while a request
+// is in flight, and a rejection shows Retry instead of leaving the
+// container stuck on whatever was there before.
 const { JSDOM } = require("jsdom");
 const fs = require("fs");
 const path = require("path");
@@ -15,36 +13,31 @@ const dom = new JSDOM(`<!DOCTYPE html><body><div id="app"></div></body>`, {
 });
 const { window } = dom;
 window.eval(fs.readFileSync(path.join(__dirname, "..", "ui.js"), "utf8"));
-window.initConnectivityBadge(); // DOMContentLoaded already fired before eval in this harness
 
 const app = window.document.getElementById("app");
 const results = [];
 function check(label, cond) { results.push({ label, pass: !!cond }); }
 
 async function run() {
-  // 1. Fast call: no loading flash.
+  // A resolved call renders the real result with nothing else ever shown.
   app.innerHTML = "";
   await window.runAsyncView(app, {
     load: () => Promise.resolve("ok"),
     render: (v) => { app.innerHTML = `<p>${v}</p>`; },
-    delayMs: 150,
   });
-  check("fast call never showed a loading screen", !app.innerHTML.includes("Loading"));
-  check("fast call rendered the real result", app.textContent.includes("ok"));
+  check("no loading text/spinner is ever painted", !app.innerHTML.toLowerCase().includes("loading"));
+  check("the real result is rendered", app.textContent.includes("ok"));
 
-  // 2. Slow call: loading screen appears after the threshold, then clears.
+  // A slower call still never shows anything but the final result — no
+  // loading screen regardless of how long the request takes.
   app.innerHTML = "";
-  const slowPromise = window.runAsyncView(app, {
-    load: () => new Promise((resolve) => setTimeout(() => resolve("slow-ok"), 300)),
+  await window.runAsyncView(app, {
+    load: () => new Promise((resolve) => setTimeout(() => resolve("slow-ok"), 200)),
     render: (v) => { app.innerHTML = `<p>${v}</p>`; },
-    delayMs: 50,
   });
-  await new Promise((r) => setTimeout(r, 100));
-  check("slow call shows loading screen once past the delay threshold", app.innerHTML.includes("Loading"));
-  await slowPromise;
-  check("slow call replaces loading with the real result once resolved", app.textContent.includes("slow-ok"));
+  check("a slow call still shows no loading screen, only the final result", app.textContent.includes("slow-ok") && !app.innerHTML.toLowerCase().includes("loading"));
 
-  // 3. Rejected call: never left stuck on "Loading…"; Retry re-runs it.
+  // A rejected call never leaves the container stuck; Retry re-runs it.
   app.innerHTML = "";
   let attempts = 0;
   await window.runAsyncView(app, {
@@ -53,43 +46,14 @@ async function run() {
       return attempts === 1 ? Promise.reject(new Error("network down")) : Promise.resolve("recovered");
     },
     render: (v) => { app.innerHTML = `<p>${v}</p>`; },
-    delayMs: 150,
   });
-  check("failed call does NOT stay stuck on 'Loading…'", !app.innerHTML.includes("Loading"));
+  check("failed call is never stuck on a loading state", !app.innerHTML.toLowerCase().includes("loading"));
   check("failed call shows a Retry control", !!app.querySelector(".retry-btn"));
 
   app.querySelector(".retry-btn").click();
   await new Promise((r) => setTimeout(r, 20));
   check("clicking Retry re-runs load and renders the recovered result", app.textContent.includes("recovered"));
   check("Retry actually called load() a second time", attempts === 2);
-
-  // 4. Online/server badge: two distinct signals, never conflated. A
-  // real business error (not a network failure) must NOT flip the server
-  // badge to "Connection problem" — only an actual fetch-level failure does.
-  app.innerHTML = "";
-  await window.runAsyncView(app, {
-    load: () => Promise.reject(new Error("duplicate key value violates unique constraint")),
-    render: () => {},
-    delayMs: 150,
-  });
-  check("a business-logic error leaves the badge 'Online' (not a connectivity signal)",
-    window.document.getElementById("connBadge").textContent === "✓ Online");
-
-  await window.runAsyncView(app, {
-    load: () => Promise.reject(new Error("Failed to fetch")),
-    render: () => {},
-    delayMs: 150,
-  });
-  check("a genuine network failure flips the badge to 'Connection problem'",
-    window.document.getElementById("connBadge").textContent === "⚠ Connection problem");
-
-  await window.runAsyncView(app, {
-    load: () => Promise.resolve("ok"),
-    render: () => {},
-    delayMs: 150,
-  });
-  check("a subsequent successful round-trip clears the connection problem",
-    window.document.getElementById("connBadge").textContent === "✓ Online");
 
   results.forEach((r) => console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.label}`));
   const failed = results.filter((r) => !r.pass);

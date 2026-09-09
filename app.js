@@ -350,7 +350,6 @@ function resetSession() { session = { entries: {} }; }
 
 async function boot() {
   await Auth.requireSession();
-  render(`<div class="screen"><p class="muted">Loading…</p></div>`);
   try {
     await Store.init();
     [PRODUCTS, LOCATIONS] = await Promise.all([Store.getProducts(), Store.getLocations()]);
@@ -367,9 +366,6 @@ async function boot() {
     if (LOCATIONS.length === 0) {
       throw new Error("No locations configured for your organization yet.");
     }
-    // Prefetch while the boot screen's "Loading…" is already showing, so
-    // the first Home render doesn't need a second loading flash right
-    // after this one (see loadHomeStatus above).
     await loadHomeStatus(currentLocation());
     // replaceState, not go()'s pushState: this is the initial view for
     // this page load, not a navigation the user took — it shouldn't add

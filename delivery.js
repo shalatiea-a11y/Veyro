@@ -252,11 +252,6 @@ function emptyState(title, body, actionHtml) {
 
 async function boot() {
   await Auth.requireSession();
-  // Delay threshold: only paint a loading screen if this is still running
-  // after 150ms, so a fast connection goes straight to the real screen with
-  // no "Loading…" flash at all.
-  let settled = false;
-  const loadingTimer = setTimeout(() => { if (!settled) app.innerHTML = loadingScreen(); }, 150);
   try {
     const profile = await Store.init();
     [LOCATIONS, SUPPLIERS, PRODUCTS] = await Promise.all([
@@ -310,15 +305,9 @@ async function boot() {
     render();
   } catch (err) {
     console.error(err);
-    reportApiOutcome(err);
     app.innerHTML = errorScreen(err.message);
     const btn = app.querySelector(".retry-btn");
     if (btn) btn.onclick = () => boot();
-    return;
-  } finally {
-    settled = true;
-    clearTimeout(loadingTimer);
   }
-  reportApiOutcome(null);
 }
 boot();

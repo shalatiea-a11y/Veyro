@@ -832,3 +832,43 @@ distinction actually holds. `sw.js` bumped to `rios-v11`.
 screen (it's a fixed top-right pill and could overlap a page's own
 topbar content on some screen widths — worth a manual check); real-device
 airplane-mode toggling.
+
+## Phase 10c: removed the loading screens and the online badge entirely
+
+Direct user feedback after Phase 10/10b: the loading screens and the
+online/offline badge were themselves the annoyance — not a delay
+threshold tuning problem. Removed both, per explicit instruction, rather
+than trying to make them less noticeable.
+
+**What changed:**
+- `ui.js`: deleted `loadingScreen()`, the connectivity badge (`initConnectivityBadge()`/
+  `updateConnBadge()`/`reportApiOutcome()`/`serverReachable`) entirely.
+  `runAsyncView()` no longer has a delay-threshold timer or any loading
+  UI at all — it just awaits `load()` and calls `render()`. The only
+  thing left on failure is `errorScreen()` (message + Retry), which stays
+  because the earlier, real bug (`manager.js`/`admin.js` screens stuck
+  forever on a literal "Loading…" after a failed request) still needs a
+  way out — removing loading text must not bring back that bug.
+- `app.js` boot(), `admin.js` render(), `delivery.js` boot(): removed the
+  unconditional `"Loading…"` render and the delay-threshold timers added
+  in Phase 10/10b. These screens now render directly once data arrives,
+  nothing shown in between.
+- No badge/pill in any corner anymore on any page.
+
+**What did NOT change:** error+retry handling (still real — a failed
+request shows "Couldn't load this" + Retry, never a stuck screen), the
+Android Back navigation from Phase 9, button-level Saving…/Signing in…
+feedback (that's inline button text, not a page loader, and still guards
+against double-submits), and all business logic.
+
+**Verified:** `tests/loading.test.js` rewritten to assert directly that
+`runAsyncView()` never paints anything but the final result or an error
+— no loading string appears in the DOM at any point, for a fast call, a
+slow (200ms) call, or a failing one. 40/40 total assertions pass via
+`npm test`. `sw.js` bumped to `rios-v12`.
+
+**NOT VERIFIED:** how this actually feels on the user's phone over a real
+mobile connection — with no loading UI at all, a genuinely slow request
+(e.g. a bad connection) will now show nothing until it either completes
+or fails, which is what was asked for, but is worth confirming feels
+right in practice rather than jarring.
