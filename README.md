@@ -1028,3 +1028,128 @@ should finally remove the white screen on Delivery specifically, since
 it's the first one that removes the page navigation itself rather than
 speeding up what happens during it. Reopen the app fully once, then try
 Home → Delivery Receiving again.
+
+## Phase 11: generic package/unit conversion engine + design system foundation
+
+Scope note: the request this phase covered 79 numbered sections spanning
+a full commercial-product visual redesign, a generic packaging/conversion
+engine with an exact 17-product catalog, product imagery, and a testing/
+verification framework. That is realistically weeks of work. This pass
+delivered the highest-value, most concrete, fully-verifiable slice first
+— "employee counts, system calculates" — rather than spreading thin
+across everything superficially. What's done is done for real (tested
+against actual Postgres, not just read); what's not done is listed
+honestly at the end, not silently skipped.
+
+**Core principle implemented: employee counts, system calculates.**
+Built a generic, deterministic package/unit conversion engine — no AI,
+no per-product special-casing in code, just a reusable data model any
+product can use:
+
+- `supabase/schema.sql`: new `product_packages` table (ordered package
+  tiers: name, contains, unit — where `unit` is either another tier's
+  name or the product's `base_unit`, so arbitrary-depth hierarchies like
+  Pommes' carton→bag→kg fall out of the same structure as Stora kött's
+  single carton→piece tier). New `products` columns (`base_unit`,
+  `base_unit_label`, `unit_weight_g`, `unit_volume_ml`, `net_weight_kg`,
+  `open_piece_notes`) — all nullable/defaulted, so every existing product
+  and every existing inventory record is completely unaffected. New
+  `resolve_generic_inventory_quantity()` function: walks a product's
+  package chain server-side and is the ONLY thing ever trusted to compute
+  a normalized quantity for these entries — mirrors the same
+  "client sends raw values, server recomputes" rule every other entry
+  mode in this schema already followed. `submit_daily_inventory()`
+  extended with a new `entry_mode = 'generic'` branch; the original
+  `boxes_pieces`/`fraction`/`pieces` modes are untouched.
+- `packaging.js`: the same conversion logic client-side, for instant
+  preview only — `normalizeBreakdown()` (entry → total) and
+  `decompose()`/`formatBreakdown()` (total → human breakdown, e.g. 17
+  bags of Pommes → "3 carton + 2 bag", the exact worked example in the
+  spec). A product with an unconfigured unit (Nuggets: "piece" was never
+  defined) throws instead of guessing — this is what makes "no invented
+  bag→piece conversion" a property of the data, not a special case.
+- `app.js`: Morning Inventory's product entry screen now renders one
+  input per configured unit (e.g. Pommes gets carton/bag/kg fields) with
+  a live total and live decomposed-equivalent line, for any product with
+  package config. A product with NONE keeps the original boxes+pieces/
+  fraction/pieces UI exactly as before — this is the backward-compat
+  path required by the spec (section 63).
+- `admin.js` / `storage.js`: a package-tier editor added to the Products
+  tab (base unit, display label, open-notes flag, an ordered add/remove
+  list of tiers) — generic, works for any product including multi-tier
+  ones, not built per-product.
+- `supabase/seed_package_config.sql`: configures the exact 17 products
+  specified (Monster x3, Bacon, Stora/Small kött, chicken/vego burgers,
+  4 bread types, Pommes' 2-level hierarchy, Nuggets/Chili cheese with NO
+  invented piece conversion, Ost cheddar's 2-level hierarchy, Grillost).
+  Package sizes and weights ONLY — no current stock counts inserted, per
+  the explicit instruction. Idempotent (re-running updates in place,
+  never duplicates) and scoped automatically to your own organization —
+  run it once in the Supabase SQL editor after the schema.sql additions.
+
+**Design system foundation** (`style.css`): CSS custom properties for
+color/spacing/radius/shadow/transition, a real button system (primary/
+secondary/ghost/destructive, all sharing one visual language instead of
+one-off styles), subtle 150-200ms screen-entrance and tap-feedback
+transitions (respecting `prefers-reduced-motion`), visible focus states
+for keyboard/screen-reader use, and a consistent empty-state component.
+Category tiles in Morning Inventory now show a small flat SVG icon
+(meat/bread/drinks/frozen/cheese/vegetable/sauce, with a sensible
+fallback) instead of no icon at all — real product photography wasn't
+practical here (no image hosting/licensing pipeline in this
+environment), so this is the "visually consistent illustration"
+fallback the spec itself allows for that case.
+
+**Testing — what was actually run, not claimed:**
+- `tests/packaging.test.js`: 44 assertions against the real engine,
+  covering every product and every worked example in the spec's own
+  section 60 (Pommes' cartons/bags/kg in all directions including the
+  exact "17 bags → 3 carton + 2 bag" example; Nuggets and Chili cheese
+  both proven to THROW on an unconfigured unit rather than invent a
+  conversion; Ost cheddar's package→block→slice chain; every bread/meat/
+  burger size). LOCALLY VERIFIED.
+- The SQL layer was verified against a REAL local Postgres instance (not
+  read by eye): applied the full updated `schema.sql` fresh twice
+  (clean, no errors both times), exercised
+  `resolve_generic_inventory_quantity()` and the full
+  `submit_daily_inventory()` RPC end-to-end as an actual `employee` role
+  under RLS (Pommes 17 bags → 42.5 kg, mixed carton+bag entries, Stora
+  kött 2.5 cartons → 60 pieces — all matching packaging.js exactly),
+  confirmed a non-admin is correctly blocked by RLS from writing package
+  tiers, confirmed the OLD boxes_pieces mode still computes correctly
+  (regression check), and ran `seed_package_config.sql` against a
+  simulated real org (matched by email) twice to confirm it's genuinely
+  idempotent (17 products, 17 tier rows both times, no duplicates).
+  LOCALLY VERIFIED.
+- `tests/navigation-employee.test.js` extended with 9 new assertions
+  driving the REAL app.js UI: a package-configured product renders the
+  new per-unit fields (not the legacy tabs), typing "17" into the bag
+  field live-updates the total to "42.5 kg" and the equivalent line to
+  "3 carton + 2 bag", and — most importantly — submitting sends the RAW
+  entered breakdown (`{bag: "17"}`), never a client-computed total,
+  proving the "client sends raw values, server decides" rule actually
+  holds through the real UI, not just in the engine in isolation.
+  LOCALLY VERIFIED.
+- Total: 104/104 automated assertions pass (`npm test`).
+- Admin's new package-tier editor UI: code-reviewed and manually reasoned
+  through, but has no automated test and has NOT been exercised in a
+  real browser. NOT VERIFIED.
+- Visual/UX result on an actual phone: NOT VERIFIED — needs your review.
+
+**Explicitly NOT done this pass (honest, not silently skipped):**
+Photographic/realistic product imagery (FUTURE — needs a real image
+source and licensing decision this environment can't make); full
+desktop-specific grid layouts distinct from mobile (only responsive
+scaling exists); PWA splash/startup screen polish; a full accessibility
+audit beyond focus-visible states; skeleton loaders for lists (the
+loading-architecture work in Phases 9-10 already made "no loading flash"
+the default, which covers most of what skeletons would have addressed);
+Manager Dashboard / Suppliers / Delivery Receiving visual overhaul beyond
+inheriting the same design tokens automatically through `style.css`; any
+Oracle/external-system integration (the `product_external_mappings`
+table exists as pure scaffolding, zero rows, matching the explicit
+instruction not to invent one); AI camera counting (explicitly excluded
+by the spec itself). Recommended next step: get the seed script run and
+the new Inventory entry screen reviewed on a real phone before investing
+further in visual polish — that feedback should drive what's actually
+worth doing next.

@@ -15,11 +15,19 @@ const { window } = dom;
 // Mocks for everything app.js expects to exist already (auth.js, storage.js).
 window.Auth = { requireSession: async () => ({}), signOut: () => {} };
 window.eval(fs.readFileSync(require("path").join(__dirname, "..", "ui.js"), "utf8"));
+window.eval(fs.readFileSync(require("path").join(__dirname, "..", "packaging.js"), "utf8"));
 window.Store = {
   init: async () => ({ role: "employee" }),
   getProducts: async () => ([
     { id: "p1", name: "Big Meat", category: "Meat", unit: "box", unitsPerBox: 24 },
     { id: "p2", name: "Small Meat", category: "Meat", unit: "box", unitsPerBox: 60 },
+    // A product with real package config — routes through the NEW
+    // generic conversion-engine UI instead of the legacy boxes+pieces one.
+    {
+      id: "p3", name: "Pommes", category: "Frozen", unit: "unit", unitsPerBox: 1,
+      base_unit: "kg", base_unit_label: "kg", open_piece_notes: false,
+      packages: [{ name: "carton", contains: 5, unit: "bag" }, { name: "bag", contains: 2.5, unit: "kg" }],
+    },
   ]),
   getLocations: async () => ([{ id: "loc1", name: "Downtown" }, { id: "loc2", name: "Airport" }]),
   getCurrentLocation: () => window.__currentLocation || "loc1",
@@ -29,8 +37,11 @@ window.Store = {
     window.Store.todaysInventoryCalls++;
     return null;
   },
-  normalizeQuantity: (p, entry) => (Number(entry.fullBoxes) || 0) * p.unitsPerBox + (Number(entry.pieces) || 0),
-  saveInventory: async () => "sub-id",
+  normalizeQuantity: (p, entry) => entry.mode === "generic"
+    ? window.normalizeBreakdown(p, entry.breakdown || {})
+    : (Number(entry.fullBoxes) || 0) * p.unitsPerBox + (Number(entry.pieces) || 0),
+  saveInventoryCalls: [],
+  saveInventory: async function (record) { window.Store.saveInventoryCalls.push(record); return "sub-id"; },
   getInventories: async () => ([]),
   getAllSuppliersCalls: 0,
   getAllSuppliers: async function () {
@@ -117,6 +128,36 @@ async function run() {
   await window.go("delivery");
   check("returning to Delivery does NOT refetch suppliers (no unnecessary duplicate request)",
     window.Store.getAllSuppliersCalls === 1);
+
+  // Package/unit conversion engine wired into the real Product Entry
+  // screen: a product with configured package tiers (Pommes) must render
+  // the NEW generic field-per-unit UI (not the old boxes+pieces tabs),
+  // update its live total as the employee types, and save with the raw
+  // breakdown intact — never a client-computed total.
+  await window.go("productEntry", "p3");
+  const app = window.document.getElementById("app");
+  check("Pommes gets the generic entry UI: a 'carton' field exists", !!app.querySelector("#qty-carton"));
+  check("Pommes gets the generic entry UI: a 'bag' field exists", !!app.querySelector("#qty-bag"));
+  check("Pommes gets the generic entry UI: a 'kg' field exists (its base_unit)", !!app.querySelector("#qty-kg"));
+  check("Pommes does NOT get the legacy boxes+pieces tabs", !app.querySelector(".tabs"));
+
+  app.querySelector("#qty-bag").value = "17";
+  app.querySelector("#qty-bag").dispatchEvent(new window.Event("input"));
+  check("typing 17 in 'bag' live-updates the total to 42.5 kg (17 x 2.5, the spec's own worked example)",
+    app.querySelector("#totalVal").textContent.includes("42.5"));
+  check("the equivalent line shows the decomposed breakdown (3 carton + 2 bag)",
+    app.querySelector("#equivLine").textContent.includes("3 carton") && app.querySelector("#equivLine").textContent.includes("2 bag"));
+
+  await window.commitEntry("p3");
+  await window.go("review");
+  check("Review shows Pommes in kg, not a hardcoded 'pcs'", app.textContent.includes("42.5 kg"));
+
+  window.Store.saveInventoryCalls.length = 0;
+  await window.submitInventory();
+  const saved = window.Store.saveInventoryCalls[0];
+  const pommesItem = saved && saved.items.find((it) => it.productId === "p3");
+  check("submitted inventory sends Pommes' RAW breakdown ({bag:'17'}), not a pre-computed total",
+    !!pommesItem && pommesItem.entry.mode === "generic" && String(pommesItem.entry.breakdown.bag) === "17");
 
   results.forEach((r) => console.log(`${r.pass ? "PASS" : "FAIL"}  ${r.label}`));
   const failed = results.filter((r) => !r.pass);

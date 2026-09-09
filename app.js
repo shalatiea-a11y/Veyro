@@ -87,6 +87,31 @@ async function loadHomeStatus(loc, { force = false } = {}) {
   return existing;
 }
 
+// Consistent flat line-icon set for category tiles, keyed by category
+// name (case-insensitive substring match, since categories are free text
+// entered by an admin). No external icon font/CDN, no product photography
+// pipeline in this environment — these are the "visually consistent
+// illustration" fallback the design spec explicitly allows for when real
+// product photos aren't practical, so a category at least reads as
+// "bread" or "drinks" at a glance instead of a generic arrow. Falls back
+// to a plain box icon for any category name that doesn't match.
+const CATEGORY_ICONS = {
+  meat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><circle cx="12" cy="16" r="5"/></svg>`,
+  bread: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 5 0 0 1 16 0v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 12v2M12 11v3M16 12v2"/></svg>`,
+  drinks: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M7 9h10"/></svg>`,
+  frozen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11"/></svg>`,
+  cheese: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l9-11 9 11z"/><circle cx="12" cy="15" r=".6" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r=".6" fill="currentColor" stroke="none"/></svg>`,
+  vegetable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c-4-1-7-4-7-9a5 5 0 0 1 9-3 5 5 0 0 1 5 9c-1 2-4 3-7 3z"/><path d="M12 9V4"/></svg>`,
+  sauce: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 6 5 9a5 5 0 0 1-10 0c0-3 2-6 5-9z"/></svg>`,
+};
+const DEFAULT_CATEGORY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/></svg>`;
+
+function categoryIcon(categoryName) {
+  const key = String(categoryName || "").toLowerCase();
+  const match = Object.keys(CATEGORY_ICONS).find((k) => key.includes(k));
+  return `<span class="cat-icon">${match ? CATEGORY_ICONS[match] : DEFAULT_CATEGORY_ICON}</span>`;
+}
+
 const views = {
   async home({ force = false } = {}) {
     const loc = currentLocation();
@@ -151,6 +176,7 @@ const views = {
             const done = PRODUCTS.filter((p) => p.category === c && session.entries[p.id]).length;
             return `
               <button class="category-tile" onclick="go('productList','${c}')">
+                ${categoryIcon(c)}
                 <div class="cat-name">${c}</div>
                 <div class="cat-count">${done}/${count}</div>
               </button>
@@ -170,10 +196,12 @@ const views = {
         ${products.map((p) => {
           const entry = session.entries[p.id];
           const total = entry ? Store.normalizeQuantity(p, entry) : null;
+          const isGeneric = (p.packages && p.packages.length > 0) || (p.base_unit && p.base_unit !== "piece");
+          const unitLabel = isGeneric ? (p.base_unit_label || p.base_unit) : "pcs";
           return `
             <button class="list-row" onclick="go('productEntry','${p.id}')">
               <span>${p.name}</span>
-              <span class="row-right">${total !== null ? total + " pcs ✓" : "Enter →"}</span>
+              <span class="row-right">${total !== null ? `${formatQty(total)} ${unitLabel} ✓` : "Enter →"}</span>
             </button>
           `;
         }).join("")}
@@ -183,6 +211,16 @@ const views = {
 
   async productEntry(productId) {
     const p = PRODUCTS.find((x) => x.id === productId);
+    // Employee counts, system calculates: any product with a configured
+    // package hierarchy (product_packages rows) or a non-piece base unit
+    // (kg/ml, e.g. Bacon) uses the generic conversion-engine UI below.
+    // A product with neither — every product that existed before this
+    // phase — falls straight through to the original boxes+pieces/
+    // fraction/pieces UI, completely unchanged.
+    if ((p.packages && p.packages.length > 0) || (p.base_unit && p.base_unit !== "piece")) {
+      renderGenericProductEntry(p);
+      return;
+    }
     const entry = session.entries[productId] || { mode: "boxes+pieces", fullBoxes: 0, pieces: 0, fraction: "full" };
     session.entries[productId] = entry;
 
@@ -280,13 +318,14 @@ const views = {
   async review() {
     const rows = Object.keys(session.entries).map((pid) => {
       const p = PRODUCTS.find((x) => x.id === pid);
-      return { p, total: Store.normalizeQuantity(p, session.entries[pid]) };
+      const isGeneric = (p.packages && p.packages.length > 0) || (p.base_unit && p.base_unit !== "piece");
+      return { p, total: Store.normalizeQuantity(p, session.entries[pid]), unitLabel: isGeneric ? (p.base_unit_label || p.base_unit) : "pcs" };
     });
     render(`
       <div class="topbar"><button class="back" onclick="go('categories')">←</button><div class="brand">Review</div></div>
       <div class="screen">
         ${rows.length === 0 ? `<p class="muted">No products entered yet.</p>` : rows.map((r) => `
-          <div class="review-row"><span>${r.p.name}</span><span>${r.total} pcs</span></div>
+          <div class="review-row"><span>${r.p.name}</span><span>${formatQty(r.total)} ${r.unitLabel}</span></div>
         `).join("")}
         <button id="submitInventoryBtn" class="primary sticky" ${rows.length === 0 ? "disabled" : ""} onclick="submitInventory()">Submit Inventory</button>
       </div>
@@ -362,12 +401,98 @@ const views = {
   },
 };
 
+// Generic package-entry UI: one input per configured unit (e.g. Pommes
+// gets "carton" / "bag" / "kg" fields; Stora kött gets "carton" /
+// "piece"; Bacon, with no tiers at all, gets a single "kg" field). The
+// employee fills in whichever field matches how they're actually
+// counting — never has to do the arithmetic themselves. Live preview
+// uses the exact same packaging.js functions the server-side
+// resolve_generic_inventory_quantity() mirrors, so what's shown here is
+// never a guess at what will be saved.
+function renderGenericProductEntry(p) {
+  const entry = session.entries[p.id] || { mode: "generic", breakdown: {} };
+  entry.mode = "generic";
+  session.entries[p.id] = entry;
+
+  // Outer tier first (matches product_packages.sort_order), base_unit last.
+  const fields = [
+    ...p.packages.map((t) => ({ key: t.name, label: t.name })),
+    { key: p.base_unit, label: p.base_unit_label || p.base_unit },
+  ];
+
+  function currentTotal() {
+    try { return normalizeBreakdown(p, entry.breakdown); }
+    catch (e) { return 0; }
+  }
+
+  function equivalentLine() {
+    const total = currentTotal();
+    if (total <= 0) return "";
+    try {
+      const parts = decompose(p, total).filter((part) => part.count > 0);
+      return formatBreakdown(parts.length ? parts : [{ name: p.base_unit_label || p.base_unit, count: total }]);
+    } catch (e) {
+      return `${total} ${p.base_unit_label || p.base_unit}`;
+    }
+  }
+
+  render(`
+    <div class="topbar"><button class="back" onclick="go('productList','${p.category}')">←</button><div class="brand">${p.name}</div></div>
+    <div class="screen">
+      <p class="muted">${p.packages.map((t) => `1 ${t.name} = ${formatQty(t.contains)} ${t.unit}`).join(" · ") || `Tracked in ${p.base_unit_label || p.base_unit}`}</p>
+      <div class="generic-entry-card">
+        ${fields.map((f) => `
+          <div class="stepper-row">
+            <label>${capitalize(f.label)}</label>
+            <input type="number" inputmode="decimal" min="0" step="any" id="qty-${f.key}"
+              value="${entry.breakdown[f.key] ?? ""}" placeholder="0"
+              style="width:110px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:16px;text-align:right"
+              oninput="updateGenericField('${p.id}','${f.key}', this.value)">
+          </div>
+        `).join("")}
+        ${p.open_piece_notes ? `
+          <div class="stepper-row">
+            <label class="muted">Pieces (approx, optional)</label>
+            <input type="number" inputmode="decimal" min="0" step="any" id="qty-_note_pieces"
+              value="${entry.breakdown._note_pieces ?? ""}" placeholder="0"
+              style="width:110px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:16px;text-align:right"
+              oninput="updateGenericField('${p.id}','_note_pieces', this.value)">
+          </div>
+          <p class="muted" style="font-size:12px">Not converted — the exact pieces per bag for this product isn't confirmed yet, so this is just a note.</p>
+        ` : ""}
+      </div>
+      <div class="total-card">
+        <span>Total</span>
+        <span id="totalVal" class="total-val">${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}</span>
+      </div>
+      <p class="muted" id="equivLine" style="text-align:right">${equivalentLine()}</p>
+      <button class="primary sticky" onclick="commitEntry('${p.id}')">Save</button>
+    </div>
+  `);
+
+  window.updateGenericField = (id, key, value) => {
+    const e = session.entries[id];
+    if (value === "") delete e.breakdown[key];
+    else e.breakdown[key] = value;
+    document.getElementById("totalVal").textContent = `${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}`;
+    document.getElementById("equivLine").textContent = equivalentLine();
+  };
+}
+
+function formatQty(n) {
+  const r = Math.round((Number(n) || 0) * 1000) / 1000;
+  return r % 1 === 0 ? String(r) : String(r);
+}
+
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
 function renderEmptyState(brand, title, body, actionHtml) {
   render(`
     <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">${brand}</div></div>
-    <div class="screen center" style="padding-top:60px">
-      <h1 style="font-size:20px">${title}</h1>
-      <p class="muted">${body}</p>
+    <div class="screen empty-state">
+      <span class="cat-icon">${DEFAULT_CATEGORY_ICON}</span>
+      <h2>${title}</h2>
+      <p>${body}</p>
       ${actionHtml || ""}
     </div>
   `);

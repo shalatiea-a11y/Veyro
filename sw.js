@@ -8,10 +8,10 @@
 // immediate), and fetch in the background to refresh the cache for next
 // time — so a code change still reaches users within one navigation or
 // two, without making every single navigation pay for a network round-trip.
-const CACHE = "rios-v16";
+const CACHE = "rios-v17";
 const ASSETS = [
   "index.html", "manager.html", "login.html", "admin.html", "signup.html", "join.html",
-  "style.css", "config.js", "auth.js", "storage.js", "ui.js", "app.js", "manager.js", "admin.js",
+  "style.css", "config.js", "auth.js", "storage.js", "ui.js", "packaging.js", "app.js", "manager.js", "admin.js",
   "manifest.json", "icons/icon.svg", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png",
 ];
 

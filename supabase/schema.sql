@@ -248,6 +248,9 @@ declare
   v_fraction text;
   v_normalized numeric;
   v_fraction_value numeric;
+  v_breakdown jsonb;
+  v_generic_result jsonb;
+  v_packages_at_entry jsonb;
 begin
   if v_org_id is null then
     raise exception 'No organization linked to this account';
@@ -277,6 +280,8 @@ begin
     v_full_boxes := nullif(v_item->>'entered_full_boxes', '')::numeric;
     v_pieces := nullif(v_item->>'entered_pieces', '')::numeric;
     v_fraction := nullif(v_item->>'entered_fraction', '');
+    v_breakdown := null;
+    v_packages_at_entry := null;
 
     if v_mode = 'boxes_pieces' then
       v_normalized := coalesce(v_full_boxes, 0) * v_product.units_per_package + coalesce(v_pieces, 0);
@@ -287,16 +292,32 @@ begin
       v_normalized := round(v_product.units_per_package * v_fraction_value);
     elsif v_mode = 'pieces' then
       v_normalized := coalesce(v_pieces, 0);
+    elsif v_mode = 'generic' then
+      -- Multi-tier package entries (Pommes' carton/bag/kg, Stora kött's
+      -- carton/piece, ...). The client's own packaging.js computes the
+      -- same thing for instant preview, but ONLY this server-side
+      -- resolve_generic_inventory_quantity() call is trusted — the
+      -- client-sent breakdown is raw entered values, never a client-
+      -- computed total, same principle as every other entry mode here.
+      v_breakdown := v_item->'entered_breakdown';
+      if v_breakdown is null then
+        raise exception 'Missing entered_breakdown for a generic entry';
+      end if;
+      v_generic_result := resolve_generic_inventory_quantity(v_product.id, v_breakdown);
+      v_normalized := (v_generic_result->>'normalized_quantity')::numeric;
+      v_packages_at_entry := v_generic_result->'packages_at_entry';
     else
       raise exception 'Unknown entry mode %', v_mode;
     end if;
 
     insert into inventory_items (
       submission_id, product_id, entry_mode, entered_full_boxes, entered_pieces,
-      entered_fraction, units_per_package_at_entry, normalized_quantity
+      entered_fraction, units_per_package_at_entry, normalized_quantity,
+      entered_breakdown, packages_at_entry
     ) values (
       v_submission_id, v_product.id, v_mode, v_full_boxes, v_pieces,
-      v_fraction, v_product.units_per_package, v_normalized
+      v_fraction, case when v_mode = 'generic' then null else v_product.units_per_package end,
+      v_normalized, v_breakdown, v_packages_at_entry
     );
   end loop;
 
@@ -743,6 +764,189 @@ using (
   bucket_id = 'delivery-documents'
   and (storage.foldername(name))[1] = current_org_id()::text
 );
+
+-- =======================================================================
+-- Package/unit configuration — generic conversion engine.
+--
+-- Products previously supported exactly ONE flat package size
+-- (package_unit/units_per_package on the products row itself). Real
+-- products need more: multiple nested package tiers (Pommes: carton -> 5
+-- bags -> 2.5 kg each), base units other than "piece" (kg, and cans
+-- tracked with an informational ml size), and products where the piece
+-- count inside a package is genuinely NOT known (Nuggets: bag = 1 kg is
+-- confirmed, pieces-per-bag is not) — the system must not invent that
+-- number.
+--
+-- This is purely additive: every new column is nullable or has a safe
+-- default, package_unit/units_per_package are untouched, and any product
+-- with zero rows in product_packages behaves exactly as it did before —
+-- the client (app.js) falls back to the original single-tier entry UI
+-- for those, so existing products and existing inventory history are
+-- completely unaffected.
+-- =======================================================================
+alter table products add column if not exists base_unit text not null default 'piece' check (base_unit in ('piece', 'kg', 'ml'));
+-- Purely a display string (e.g. "slice", "can", "patty") for a product
+-- whose base_unit is semantically 'piece' but has a more specific name
+-- in the UI. Never used by the conversion engine — base_unit alone
+-- decides count-vs-weight-vs-volume math. Falls back to base_unit itself
+-- when not set.
+alter table products add column if not exists base_unit_label text;
+alter table products add column if not exists unit_weight_g numeric check (unit_weight_g is null or unit_weight_g > 0);
+alter table products add column if not exists unit_volume_ml numeric check (unit_volume_ml is null or unit_volume_ml > 0);
+-- Informational only (e.g. Ost cheddar: "1 kg" per outermost package) —
+-- never participates in the conversion engine's math, which always works
+-- in whatever base_unit + package tiers are actually configured.
+alter table products add column if not exists net_weight_kg numeric check (net_weight_kg is null or net_weight_kg > 0);
+-- True only for products where an employee may jot down an approximate,
+-- informational piece count that must NEVER be treated as a real
+-- conversion (Nuggets, Chili cheese) — see resolve_generic_inventory_quantity()
+-- below, which explicitly ignores the reserved "_note_pieces" key.
+alter table products add column if not exists open_piece_notes boolean not null default false;
+
+-- Ordered package tiers for one product. sort_order 1 is the OUTERMOST
+-- package (what an employee would say first, e.g. "carton"). Each tier's
+-- `contains` is how many of `unit` are inside ONE of this tier, and
+-- `unit` is either another tier's `name` (nesting one level in) or the
+-- product's base_unit (bottoming out). Example, Pommes (base_unit 'kg'):
+--   (sort_order 1, name 'carton', contains 5,   unit 'bag')
+--   (sort_order 2, name 'bag',    contains 2.5, unit 'kg')
+create table product_packages (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references products(id) on delete cascade,
+  sort_order integer not null check (sort_order > 0),
+  name text not null,
+  contains numeric not null check (contains > 0),
+  unit text not null,
+  unique (product_id, sort_order),
+  unique (product_id, name)
+);
+create index product_packages_product_idx on product_packages (product_id);
+alter table product_packages enable row level security;
+
+create policy "product packages readable in own org" on product_packages
+  for select using (product_id in (select id from products where organization_id = current_org_id()));
+create policy "product packages admin insert" on product_packages
+  for insert with check (
+    current_role_name() = 'admin'
+    and product_id in (select id from products where organization_id = current_org_id())
+  );
+create policy "product packages admin update" on product_packages
+  for update using (
+    current_role_name() = 'admin'
+    and product_id in (select id from products where organization_id = current_org_id())
+  );
+create policy "product packages admin delete" on product_packages
+  for delete using (
+    current_role_name() = 'admin'
+    and product_id in (select id from products where organization_id = current_org_id())
+  );
+
+-- FUTURE — scaffolding only, no rows inserted, no application code reads
+-- from this yet. The exact external system (Oracle or otherwise) is NOT
+-- confirmed, so nothing here assumes a specific product/API. When a real
+-- mapping is confirmed, it is recorded here (e.g. Bacon: internal 'kg' ->
+-- external 'Oracle', unit '500 g', factor 2) WITHOUT touching the
+-- internal product_packages configuration above — the internal model and
+-- any external integration stay fully separate.
+create table product_external_mappings (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references products(id) on delete cascade,
+  external_system text not null,
+  external_unit text not null,
+  conversion_factor numeric not null check (conversion_factor > 0),
+  notes text,
+  created_at timestamptz not null default now()
+);
+alter table product_external_mappings enable row level security;
+create policy "external mappings admin only" on product_external_mappings
+  for all using (
+    current_role_name() = 'admin'
+    and product_id in (select id from products where organization_id = current_org_id())
+  ) with check (
+    current_role_name() = 'admin'
+    and product_id in (select id from products where organization_id = current_org_id())
+  );
+
+-- Extend inventory_items for the new generic entry path alongside the
+-- original boxes_pieces/fraction/pieces modes (untouched, still used by
+-- any product without package tiers configured).
+alter table inventory_items drop constraint if exists inventory_items_entry_mode_check;
+alter table inventory_items add constraint inventory_items_entry_mode_check
+  check (entry_mode in ('boxes_pieces', 'fraction', 'pieces', 'generic'));
+-- Only meaningful for the original single-tier modes; a generic entry's
+-- audit trail lives in packages_at_entry instead (below).
+alter table inventory_items alter column units_per_package_at_entry drop not null;
+-- Exactly what the employee typed, e.g. {"carton": 2, "bag": 3} or
+-- {"kg": 12.5}, optionally plus a "_note_pieces" informational count.
+alter table inventory_items add column if not exists entered_breakdown jsonb;
+-- Snapshot of the package tiers actually used to compute normalized_quantity
+-- at submission time — same auditability principle as
+-- units_per_package_at_entry: a later change to a product's package
+-- configuration must never silently reinterpret historical records.
+alter table inventory_items add column if not exists packages_at_entry jsonb;
+
+-- Deterministic, server-side, generic conversion. Walks a product's
+-- package chain from whatever unit the employee entered down to the
+-- product's base_unit, exactly mirroring packaging.js's client-side
+-- preview — except this is the one that is actually trusted; the client
+-- never gets to assert its own total for a generic entry. Products with
+-- no matching package tier for an entered unit raise an exception rather
+-- than guessing a conversion (this is what makes "Nuggets bag->piece has
+-- no invented conversion" a property of the data, not a special case in
+-- code).
+create or replace function resolve_generic_inventory_quantity(p_product_id uuid, p_breakdown jsonb)
+returns jsonb
+language plpgsql
+security invoker
+as $$
+declare
+  v_product products%rowtype;
+  v_key text;
+  v_qty numeric;
+  v_unit text;
+  v_multiplier numeric;
+  v_total numeric := 0;
+  v_pkg product_packages%rowtype;
+  v_hops integer;
+  v_snapshot jsonb := '[]'::jsonb;
+begin
+  select * into v_product from products where id = p_product_id;
+  if not found then
+    raise exception 'Unknown product %', p_product_id;
+  end if;
+
+  for v_key in select jsonb_object_keys(p_breakdown) loop
+    if v_key = '_note_pieces' then
+      continue; -- informational only, never converted or added to the total
+    end if;
+    v_qty := nullif(p_breakdown->>v_key, '')::numeric;
+    if v_qty is null or v_qty <= 0 then
+      continue;
+    end if;
+
+    v_unit := v_key;
+    v_multiplier := 1;
+    v_hops := 0;
+    while v_unit <> v_product.base_unit loop
+      v_hops := v_hops + 1;
+      if v_hops > 6 then
+        raise exception 'Product % package configuration is too deep or malformed', v_product.name;
+      end if;
+      select * into v_pkg from product_packages where product_id = p_product_id and name = v_unit;
+      if not found then
+        raise exception 'Product % has no package tier named "%" (and it is not the base unit "%")',
+          v_product.name, v_unit, v_product.base_unit;
+      end if;
+      v_multiplier := v_multiplier * v_pkg.contains;
+      v_snapshot := v_snapshot || jsonb_build_object('name', v_pkg.name, 'contains', v_pkg.contains, 'unit', v_pkg.unit);
+      v_unit := v_pkg.unit;
+    end loop;
+    v_total := v_total + v_qty * v_multiplier;
+  end loop;
+
+  return jsonb_build_object('normalized_quantity', v_total, 'packages_at_entry', v_snapshot);
+end;
+$$;
 
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards

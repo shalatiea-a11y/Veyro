@@ -32,17 +32,31 @@ const Store = (() => {
   async function getProducts() {
     const { data, error } = await supabaseClient
       .from("products")
-      .select("*")
+      .select("*, product_packages(sort_order, name, contains, unit)")
       .eq("active", true)
       .order("category")
       .order("name");
     if (error) throw error;
+    // packages stays [] for any product with no product_packages rows —
+    // that's exactly what tells the UI to fall back to the original
+    // single-tier boxes+pieces/fraction/pieces entry mode, so existing
+    // products with no package configuration behave exactly as before.
     return data.map((p) => ({
       id: p.id,
       name: p.name,
       category: p.category,
       unit: p.package_unit,
       unitsPerBox: p.units_per_package,
+      base_unit: p.base_unit,
+      base_unit_label: p.base_unit_label || p.base_unit,
+      unit_weight_g: p.unit_weight_g,
+      unit_volume_ml: p.unit_volume_ml,
+      net_weight_kg: p.net_weight_kg,
+      open_piece_notes: p.open_piece_notes,
+      packages: (p.product_packages || [])
+        .slice()
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map((t) => ({ name: t.name, contains: Number(t.contains), unit: t.unit })),
     }));
   }
 
@@ -67,6 +81,15 @@ const Store = (() => {
   // Deterministic normalization: full boxes + loose pieces -> total pieces.
   // Never involves AI — exact arithmetic on the configured conversion rate.
   function normalizeQuantity(product, entry) {
+    if (entry.mode === "generic") {
+      // Delegates to the shared deterministic engine (packaging.js) so
+      // there's exactly one implementation of the conversion math on the
+      // client — this call is only ever a live preview; submit_daily_inventory()
+      // in Postgres is the one that's actually trusted.
+      return typeof normalizeBreakdown === "function"
+        ? normalizeBreakdown(product, entry.breakdown || {})
+        : 0;
+    }
     const perBox = product.unitsPerBox;
     if (entry.mode === "boxes+pieces") {
       const boxes = Number(entry.fullBoxes) || 0;
@@ -163,13 +186,15 @@ const Store = (() => {
   // submission row that blocks a retry.
   async function saveInventory(record) {
     requireProfile();
-    const items = record.items.map((it) => ({
-      product_id: it.productId,
-      entry_mode: MODE_TO_DB[it.entry.mode],
-      entered_full_boxes: it.entry.fullBoxes ?? null,
-      entered_pieces: it.entry.pieces ?? null,
-      entered_fraction: it.entry.fraction ?? null,
-    }));
+    const items = record.items.map((it) => it.entry.mode === "generic"
+      ? { product_id: it.productId, entry_mode: "generic", entered_breakdown: it.entry.breakdown }
+      : {
+        product_id: it.productId,
+        entry_mode: MODE_TO_DB[it.entry.mode],
+        entered_full_boxes: it.entry.fullBoxes ?? null,
+        entered_pieces: it.entry.pieces ?? null,
+        entered_fraction: it.entry.fraction ?? null,
+      });
     const { data, error } = await supabaseClient.rpc("submit_daily_inventory", {
       p_location_id: record.locationId,
       p_items: items,
@@ -191,12 +216,35 @@ const Store = (() => {
     const { organization_id } = requireProfile();
     const { data, error } = await supabaseClient
       .from("products")
-      .select("*")
+      .select("*, product_packages(id, sort_order, name, contains, unit)")
       .eq("organization_id", organization_id)
       .order("category")
       .order("name");
     if (error) throw error;
-    return data;
+    return data.map((p) => ({
+      ...p,
+      product_packages: (p.product_packages || []).slice().sort((a, b) => a.sort_order - b.sort_order),
+    }));
+  }
+
+  // Replaces a product's entire package-tier list. Simpler and safer than
+  // per-row add/remove RPCs for a rarely-changed, short list (typically
+  // 0-2 tiers) — admin.js sends the full desired list each time.
+  async function setProductPackages(productId, tiers) {
+    const { error: delErr } = await supabaseClient.from("product_packages").delete().eq("product_id", productId);
+    if (delErr) throw delErr;
+    if (tiers.length === 0) return;
+    const { error: insErr } = await supabaseClient.from("product_packages").insert(
+      tiers.map((t, i) => ({ product_id: productId, sort_order: i + 1, name: t.name, contains: t.contains, unit: t.unit }))
+    );
+    if (insErr) throw insErr;
+  }
+
+  async function updateProductBaseUnit(productId, { baseUnit, baseUnitLabel, openPieceNotes }) {
+    const { error } = await supabaseClient.from("products").update({
+      base_unit: baseUnit, base_unit_label: baseUnitLabel || null, open_piece_notes: !!openPieceNotes,
+    }).eq("id", productId);
+    if (error) throw error;
   }
 
   async function createProduct({ name, category, packageUnit, unitsPerPackage }) {
@@ -470,6 +518,8 @@ const Store = (() => {
     normalizeQuantity,
     getAllProducts,
     createProduct,
+    setProductPackages,
+    updateProductBaseUnit,
     setProductActive,
     getAllLocations,
     createLocation,
