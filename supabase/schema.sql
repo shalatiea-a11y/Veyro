@@ -810,7 +810,7 @@ alter table products add column if not exists open_piece_notes boolean not null 
 -- product's base_unit (bottoming out). Example, Pommes (base_unit 'kg'):
 --   (sort_order 1, name 'carton', contains 5,   unit 'bag')
 --   (sort_order 2, name 'bag',    contains 2.5, unit 'kg')
-create table product_packages (
+create table if not exists product_packages (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references products(id) on delete cascade,
   sort_order integer not null check (sort_order > 0),
@@ -820,21 +820,31 @@ create table product_packages (
   unique (product_id, sort_order),
   unique (product_id, name)
 );
-create index product_packages_product_idx on product_packages (product_id);
+create index if not exists product_packages_product_idx on product_packages (product_id);
 alter table product_packages enable row level security;
 
+-- drop-then-create makes this block safe to paste and run more than
+-- once (e.g. by accident) — "create policy" alone has no "if not
+-- exists" in Postgres, and erroring on a duplicate policy name would
+-- abort the whole pasted script as one transaction, rolling back
+-- everything else in it too. This changes nothing about who can do
+-- what; it only makes re-running a no-op instead of an error.
+drop policy if exists "product packages readable in own org" on product_packages;
 create policy "product packages readable in own org" on product_packages
   for select using (product_id in (select id from products where organization_id = current_org_id()));
+drop policy if exists "product packages admin insert" on product_packages;
 create policy "product packages admin insert" on product_packages
   for insert with check (
     current_role_name() = 'admin'
     and product_id in (select id from products where organization_id = current_org_id())
   );
+drop policy if exists "product packages admin update" on product_packages;
 create policy "product packages admin update" on product_packages
   for update using (
     current_role_name() = 'admin'
     and product_id in (select id from products where organization_id = current_org_id())
   );
+drop policy if exists "product packages admin delete" on product_packages;
 create policy "product packages admin delete" on product_packages
   for delete using (
     current_role_name() = 'admin'
@@ -848,7 +858,7 @@ create policy "product packages admin delete" on product_packages
 -- external 'Oracle', unit '500 g', factor 2) WITHOUT touching the
 -- internal product_packages configuration above — the internal model and
 -- any external integration stay fully separate.
-create table product_external_mappings (
+create table if not exists product_external_mappings (
   id uuid primary key default gen_random_uuid(),
   product_id uuid not null references products(id) on delete cascade,
   external_system text not null,
@@ -858,6 +868,7 @@ create table product_external_mappings (
   created_at timestamptz not null default now()
 );
 alter table product_external_mappings enable row level security;
+drop policy if exists "external mappings admin only" on product_external_mappings;
 create policy "external mappings admin only" on product_external_mappings
   for all using (
     current_role_name() = 'admin'
