@@ -49,6 +49,7 @@ async function render() {
   document.querySelectorAll(".tab").forEach((btn) => {
     btn.onclick = () => { tab = btn.dataset.tab; render(); };
   });
+  paintSidebar();
   try {
     if (tab === "products") await renderProducts();
     else if (tab === "locations") await renderLocations();
@@ -57,6 +58,16 @@ async function render() {
   } catch (err) {
     showError(err);
   }
+}
+
+function paintSidebar() {
+  renderSidebar("Restaurant Ops", [
+    { key: "products", label: "Products", icon: "inventory", onClick: () => { tab = "products"; render(); } },
+    { key: "locations", label: "Locations", icon: "location", onClick: () => { tab = "locations"; render(); } },
+    { key: "suppliers", label: "Suppliers", icon: "suppliers", onClick: () => { tab = "suppliers"; render(); } },
+    { key: "team", label: "Team", icon: "team", onClick: () => { tab = "team"; render(); } },
+    { key: "manager", label: "Manager Dashboard", icon: "dashboard", onClick: () => { window.location.href = "manager.html"; } },
+  ], tab);
 }
 
 let PRODUCTS_CACHE = [];

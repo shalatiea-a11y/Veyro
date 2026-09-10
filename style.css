@@ -36,6 +36,8 @@
 
   --transition-fast: 150ms ease;
   --transition-base: 200ms ease;
+
+  --sidebar-width: 240px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -77,6 +79,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 
 .screen { padding: 20px 16px 100px; max-width: 480px; margin: 0 auto; }
+@media (min-width: 1024px) {
+  /* Desktop gets real breathing room, not a stretched phone column — a
+     manager scanning inventory/dashboard data benefits from a wider
+     reading column, but full-bleed cards at 1920px are worse than the
+     mobile layout, not better. */
+  .screen { max-width: 720px; padding: 32px 32px 60px; }
+}
+@media (min-width: 1440px) {
+  .screen { max-width: 860px; }
+}
 .screen h1 { font-size: 22px; margin: 4px 0 4px; }
 .muted { color: #6b7280; font-size: 14px; margin: 0 0 12px; }
 
@@ -233,4 +245,110 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .generic-entry-card {
   background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-4);
+}
+
+/* ======================================================================
+   Desktop layout: persistent sidebar navigation.
+   Lives as a sibling of #app in the static page markup (NOT inside the
+   element the JS router overwrites with render()/innerHTML), so it
+   survives every screen change untouched — pure CSS/markup, no routing
+   logic involved. Hidden entirely below 1024px; the existing topbar
+   already carries mobile navigation (back button, brand, actions), so
+   nothing is duplicated on mobile.
+   ====================================================================== */
+.sidebar { display: none; }
+@media (min-width: 1024px) {
+  .sidebar {
+    display: flex; flex-direction: column; gap: var(--space-1);
+    position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar-width);
+    background: var(--color-brand-dark); color: #fff; padding: var(--space-5) var(--space-3);
+    overflow-y: auto; z-index: 20;
+  }
+  .sidebar-brand { font-weight: 700; font-size: 16px; padding: 0 var(--space-3) var(--space-5); }
+  .sidebar-link {
+    display: flex; align-items: center; gap: var(--space-3); padding: 10px var(--space-3);
+    border-radius: var(--radius-sm); color: rgba(255,255,255,.75); text-decoration: none;
+    font-size: 14px; font-weight: 500; cursor: pointer; border: none; background: none;
+    width: 100%; text-align: left; transition: background-color var(--transition-fast), color var(--transition-fast);
+  }
+  .sidebar-link:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sidebar-link.active { background: rgba(255,255,255,.14); color: #fff; }
+  .sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; }
+  .sidebar-spacer { flex: 1; }
+
+  /* Body content shifts right to make room for the fixed sidebar. Using
+     a wrapper margin (not padding on #app, which the router overwrites
+     every render) keeps this independent of the JS render cycle. */
+  body { margin-left: var(--sidebar-width); }
+  .topbar { position: sticky; }
+}
+
+/* Manager Dashboard / Admin lists: on desktop, use the extra width for a
+   real multi-column grid instead of a single stretched-out column of
+   full-width cards — the "information density" a manager actually
+   benefits from, without becoming a data table. */
+@media (min-width: 1024px) {
+  .branch-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3); }
+  .branch-grid .branch-card { margin-bottom: 0; }
+}
+@media (min-width: 1440px) {
+  .branch-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* ======================================================================
+   Delivery Receiving — one-line-at-a-time review + progress panel.
+   Mobile: progress list is a compact block ABOVE the current-product
+   card, never consuming half the screen (section 26) — the current line
+   stays the visual focus. Desktop: a real split layout, main review on
+   the left, a persistent progress panel on the right (section 25).
+   ====================================================================== */
+.delivery-review-layout { max-width: 480px; }
+.delivery-review-side { margin-top: var(--space-5); }
+@media (min-width: 1024px) {
+  .delivery-review-layout {
+    max-width: 960px; display: grid; grid-template-columns: 1fr 300px; gap: var(--space-6); align-items: start;
+  }
+  .delivery-review-side {
+    margin-top: 0; position: sticky; top: 90px;
+    background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-md); padding: var(--space-4);
+  }
+}
+
+.ocr-progress-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.ocr-progress-item {
+  display: flex; align-items: center; gap: var(--space-2); padding: 8px 6px; border-radius: var(--radius-sm);
+  font-size: 13px; color: var(--color-text-muted);
+}
+.ocr-progress-mark { width: 18px; text-align: center; flex-shrink: 0; }
+.ocr-progress-item.done { color: var(--color-text); }
+.ocr-progress-item.done .ocr-progress-mark { color: var(--color-success-text); }
+.ocr-progress-item.current { background: var(--color-info-bg); color: var(--color-text); font-weight: 600; }
+.ocr-progress-item.needs-review .ocr-progress-mark { color: var(--color-warning); }
+
+.alert-banner {
+  display: flex; align-items: flex-start; gap: var(--space-2); text-align: left;
+  background: var(--color-error-bg); color: var(--color-error); border-radius: var(--radius-sm);
+  padding: var(--space-3); font-size: 14px;
+}
+.alert-banner svg { flex-shrink: 0; margin-top: 1px; }
+
+/* Original invoice viewer: full-screen overlay, tap image to toggle a
+   simple zoom (no pan library needed — object-fit:contain + a CSS
+   transform covers "view it larger" for a phone-photographed invoice
+   without adding a dependency). Works identically on mobile and desktop. */
+.invoice-viewer {
+  position: fixed; inset: 0; background: rgba(0,0,0,.9); z-index: 50;
+  display: flex; align-items: center; justify-content: center; padding: var(--space-4);
+  animation: screen-in var(--transition-base) ease-out;
+}
+.invoice-viewer-img {
+  max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-sm);
+  cursor: zoom-in; transition: transform var(--transition-base);
+}
+.invoice-viewer-img.zoomed { transform: scale(1.8); cursor: zoom-out; }
+.invoice-viewer-close {
+  position: absolute; top: var(--space-4); right: var(--space-4); background: rgba(255,255,255,.15);
+  border: none; color: #fff; border-radius: var(--radius-pill); width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }

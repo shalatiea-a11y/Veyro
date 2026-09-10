@@ -1153,3 +1153,129 @@ by the spec itself). Recommended next step: get the seed script run and
 the new Inventory entry screen reviewed on a real phone before investing
 further in visual polish — that feedback should drive what's actually
 worth doing next.
+
+## Phase 12: desktop layout foundation + Delivery Receiving invoice-matching workflow (mock)
+
+Scope note: the request this phase covered 96 numbered sections describing
+a complete commercial-SaaS UI/UX overhaul. Realistically weeks of work.
+This pass delivered the two highest-value, fully-real, fully-tested
+pieces — the desktop layout foundation (the single biggest "not a
+serious SaaS" signal found in the audit) and the complete Delivery
+Receiving invoice-matching workflow — rather than touching every section
+shallowly. What's done is genuinely done (tested against real Postgres
+and real jsdom-driven UI flows); what's deferred is listed honestly
+below, not silently skipped.
+
+**Critical decision point, resolved by the user before implementation:**
+sections 22-34 required real OCR/AI invoice reading. The user explicitly
+chose to defer any real OCR provider (no API key requested, none added)
+and build the complete workflow behind a swappable mock adapter instead.
+This is reflected honestly everywhere: `extraction_source` is stored as
+`'mock_ocr'` in the database, never `'synced'` or anything implying a
+real integration exists.
+
+**Desktop layout** (`style.css`, `ui.js`, `app.js`/`manager.js`/`admin.js`):
+a persistent sidebar (`renderSidebar()` in `ui.js`, shared across all
+three pages) living outside the JS router's render target so it survives
+every screen change untouched. Hidden below 1024px (mobile keeps its
+existing topbar-only navigation, nothing duplicated). `.screen`'s
+previously-fixed 480px max-width now scales to 720px/860px at 1024px/
+1440px — real breathing room, not a stretched phone column. Manager
+Dashboard's branch cards go to a 2-3 column grid on desktop.
+
+**Delivery Receiving — complete invoice-matching workflow**, replacing
+the flat manual-only form as the default path (manual entry is still
+one tap away, never removed — see `renderDelivery()`, unchanged):
+- `ocrProvider.js`: the extraction adapter. **Mocked** — returns the
+  exact example invoice from the spec (Ost cheddar/Stora bröd/Bacon/
+  Pommes) in order, regardless of the photo's actual content. Swapping
+  in a real OCR/vision API later means replacing this one file; nothing
+  else references how extraction actually happens.
+- `productMatcher.js`: deterministic (non-AI) matching of extracted text
+  against the existing 17-product catalog only. Exact match → high
+  confidence; substring → medium; word-overlap → low; no overlap →
+  `null`. **Never creates a product** — there is no code path in this
+  file capable of it. A near-miss like "Cheddar 1kg" suggests the real
+  "Ost cheddar" product at low confidence rather than either auto-
+  accepting it or inventing "Cheddar slices".
+- One-line-at-a-time review (`renderOcrReview()`): current product,
+  invoice quantity, an editable received-quantity stepper (defaults to
+  the invoice quantity), a live discrepancy banner when they differ, and
+  — for any non-high-confidence line — a picker restricted to the real
+  catalog with an explicit "leave unresolved" option. A progress
+  panel (desktop: persistent right-hand sidebar; mobile: compact list
+  above the current card, per the spec's own mobile guidance) shows
+  done/current/remaining/needs-review state for every line, in the
+  invoice's original order — never re-sorted.
+- "View original invoice" opens the photo full-screen with tap-to-zoom,
+  available throughout the review.
+- Completion screen summarizes matched vs. unresolved lines and any
+  discrepancies before submitting.
+- Submission reuses the SAME generic conversion engine as Morning
+  Inventory (`packaging.js`/`resolve_generic_inventory_quantity()`) —
+  no per-product formulas, no duplicate conversion logic.
+
+**Schema** (`supabase/schema.sql`, additive only): `delivery_items` got
+the same `generic` entry-mode parity `inventory_items` already had
+(Pommes/Bacon/etc. can now actually be received, which they silently
+couldn't before this phase — a real gap fixed as a side effect), plus an
+honest audit trail: `invoice_line_order`, `extracted_text`,
+`extracted_quantity`, `match_confidence`, `needs_review` — the
+originally-extracted value is preserved forever, distinct from what the
+employee actually confirmed, even after a correction. `deliveries` got
+`extraction_source` (`'manual'` | `'mock_ocr'`) so a real future
+integration's "actually synced" state can never be confused with "an
+employee confirmed this in the app," which is all that exists today.
+
+**Product visual identity**: 17 products each get a distinct color-coded
+icon (`PRODUCT_VISUAL` in `app.js`) — the three Monster variants are
+visually distinguishable (green/slate/orange). This is an honest
+simplification, not real product photography (no image hosting/
+licensing pipeline available in this environment) or bespoke per-product
+illustration — disclosed as such below, not presented as more than it is.
+
+**Icon system**: a small hand-rolled SVG set (`UI_ICONS` in `ui.js`,
+Lucide-style stroke icons) replaces text-only actions with icon+label
+pairs (save/edit/plus/minus/chevron/alert/check/camera/document/etc.).
+Deliberately NOT an external icon library — this project ships zero
+runtime dependencies by design (the Supabase SDK is the one accepted
+exception), and adding a second, larger dependency purely for icons
+wasn't judged worth breaking that principle mid-project; assessed per
+the spec's own instruction to evaluate before replacing.
+
+**Verified, not claimed:**
+- SQL layer: applied the full updated schema fresh (clean, zero errors)
+  and the incremental upgrade path on top of a simulated copy of the
+  previously-live schema (also clean), BOTH re-run a second time to
+  confirm idempotency (zero errors on repeat, no data loss). Exercised
+  `submit_delivery()` end-to-end under real RLS as an employee role with
+  a generic-mode product (Ost cheddar's package→block→slice hierarchy
+  correctly computing 3 packages → 264 slices) and the original
+  boxes_pieces mode side by side in the same delivery — both correct.
+  LOCALLY VERIFIED.
+- `tests/matching.test.js` (8 assertions): the exact "Cheddar 1kg"/
+  "Cheese slices"/"Hummus" scenarios from the spec, against the real
+  matcher. LOCALLY VERIFIED.
+- `tests/delivery-ocr.test.js` (21 assertions): the complete workflow
+  driven through real app.js code and real DOM — photo-gates extraction,
+  invoice order preservation, discrepancy banner appearing/disappearing
+  correctly, the generic engine firing correctly for both a multi-tier
+  product (Ost cheddar) and a bare-kg product (Bacon), and the final
+  submitted payload proving the RAW breakdown and original extracted
+  values are what's sent, not a pre-computed total. LOCALLY VERIFIED.
+- Total: 134/134 automated assertions pass (`npm test`). `sw.js` bumped
+  to `rios-v18`.
+- Actual visual result on a real phone/desktop browser: **NOT VERIFIED**
+  — no browser available in this environment. See the chat report for
+  the full breakdown by section.
+
+**Explicitly NOT done this pass:** real OCR/AI (deferred by explicit
+user decision — mock only, clearly labeled); photographic product
+imagery; Suppliers/Team/Settings visual redesign beyond inherited design
+tokens (they get the sidebar and color/spacing tokens automatically, but
+weren't individually rebuilt); a full accessibility audit beyond
+focus-visible states and icon-label pairing; animation performance
+testing on real hardware; a real desktop table view for Inventory
+History (still a card list, just wider); Oracle/external integration
+(correctly out of scope — `product_external_mappings` stays empty
+scaffolding).

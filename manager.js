@@ -14,18 +14,29 @@ function showError(err) {
 // past the dashboard entirely. goBranch()/goDashboard() push real
 // entries; the visible "←" button uses history.back() so it stays in
 // sync with whatever the browser's Back button would also do.
+function paintSidebar() {
+  const links = [{ key: "dashboard", label: "Dashboard", icon: "dashboard", onClick: () => goDashboard() }];
+  if (PROFILE?.role === "admin") {
+    links.push({ key: "admin", label: "Admin", icon: "admin", onClick: () => { window.location.href = "admin.html"; } });
+  }
+  renderSidebar("Restaurant Ops", links, "dashboard");
+}
+
 async function goDashboard() {
   history.pushState({ view: "dashboard" }, "", "#dashboard");
   await renderDashboard();
+  paintSidebar();
 }
 async function goBranch(locationId) {
   history.pushState({ view: "branch", locationId }, "", "#branch");
   await showBranch(locationId);
+  paintSidebar();
 }
 window.addEventListener("popstate", (e) => {
   if (!e.state) return;
   if (e.state.view === "branch") showBranch(e.state.locationId);
   else renderDashboard();
+  paintSidebar();
 });
 
 async function renderDashboard() {
@@ -211,6 +222,7 @@ async function boot() {
     }
     history.replaceState({ view: "dashboard" }, "", "#dashboard");
     renderDashboard();
+    paintSidebar();
   } catch (err) {
     showError(err);
   }

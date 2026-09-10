@@ -430,16 +430,28 @@ const Store = (() => {
     };
   }
 
-  async function submitDelivery({ locationId, supplierId, invoiceNumber, invoiceDate, notes, items, documentPath }) {
+  async function submitDelivery({ locationId, supplierId, invoiceNumber, invoiceDate, notes, items, documentPath, extractionSource }) {
     requireProfile();
-    const payload = items.map((it) => ({
-      product_id: it.productId,
-      entry_mode: MODE_TO_DB[it.entry.mode],
-      entered_full_boxes: it.entry.fullBoxes ?? null,
-      entered_pieces: it.entry.pieces ?? null,
-      entered_fraction: it.entry.fraction ?? null,
-      unit_price: it.unitPrice ?? null,
-    }));
+    const payload = items.map((it) => it.entry.mode === "generic"
+      ? {
+        product_id: it.productId, entry_mode: "generic", entered_breakdown: it.entry.breakdown,
+        unit_price: it.unitPrice ?? null, invoice_line_order: it.invoiceLineOrder ?? null,
+        extracted_text: it.extractedText ?? null, extracted_quantity: it.extractedQuantity ?? null,
+        match_confidence: it.matchConfidence ?? null, needs_review: it.needsReview ?? false,
+      }
+      : {
+        product_id: it.productId,
+        entry_mode: MODE_TO_DB[it.entry.mode],
+        entered_full_boxes: it.entry.fullBoxes ?? null,
+        entered_pieces: it.entry.pieces ?? null,
+        entered_fraction: it.entry.fraction ?? null,
+        unit_price: it.unitPrice ?? null,
+        invoice_line_order: it.invoiceLineOrder ?? null,
+        extracted_text: it.extractedText ?? null,
+        extracted_quantity: it.extractedQuantity ?? null,
+        match_confidence: it.matchConfidence ?? null,
+        needs_review: it.needsReview ?? false,
+      });
     const { data, error } = await supabaseClient.rpc("submit_delivery", {
       p_location_id: locationId,
       p_supplier_id: supplierId,
@@ -448,6 +460,7 @@ const Store = (() => {
       p_notes: notes || null,
       p_items: payload,
       p_document_path: documentPath || null,
+      p_extraction_source: extractionSource || "manual",
     });
     if (error) throw error;
     return data;

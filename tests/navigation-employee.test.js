@@ -56,6 +56,7 @@ window.eval(code);
 function currentPath() { return window.location.hash; }
 
 async function run() {
+  const app = window.document.getElementById("app");
   // boot() is called at the bottom of app.js already (fire and forget).
   // Give it a tick to finish its async chain.
   for (let i = 0; i < 20 && currentPath() !== "#home"; i++) {
@@ -118,8 +119,10 @@ async function run() {
   check("Delivery opens as an in-app view (a real history entry, not a page navigation)",
     currentPath() === "#delivery");
   check("suppliers are fetched lazily on first visit to Delivery", window.Store.getAllSuppliersCalls === 1);
-  check("Delivery screen actually rendered (supplier select present)",
-    !!window.document.getElementById("supplier"));
+  check("Delivery opens on the invoice-matching choice screen (supplier select present)",
+    !!window.document.getElementById("ocrSupplier"));
+  check("Manual entry is still reachable, not deleted",
+    app.textContent.includes("Enter items manually instead"));
 
   window.history.back();
   await new Promise((r) => setTimeout(r, 20));
@@ -135,7 +138,6 @@ async function run() {
   // update its live total as the employee types, and save with the raw
   // breakdown intact — never a client-computed total.
   await window.go("productEntry", "p3");
-  const app = window.document.getElementById("app");
   check("Pommes gets the generic entry UI: a 'carton' field exists", !!app.querySelector("#qty-carton"));
   check("Pommes gets the generic entry UI: a 'bag' field exists", !!app.querySelector("#qty-bag"));
   check("Pommes gets the generic entry UI: a 'kg' field exists (its base_unit)", !!app.querySelector("#qty-kg"));

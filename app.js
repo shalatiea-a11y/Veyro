@@ -20,6 +20,28 @@ let deliveryItems = [];
 let deliveryPhoto = null; // { file, previewUrl, uploadedPath, status: 'idle'|'uploading'|'uploaded'|'failed' }
 const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // matches the bucket's file_size_limit in schema.sql
 
+// --- Invoice-matching receiving flow (ocrProvider.js + productMatcher.js) ---
+// See ocrProvider.js: extraction is currently MOCKED, clearly labeled as
+// such in the UI. ocrLines: [{ text, extractedQuantity, product, confidence,
+// needsReview, receivedQuantity }], in the invoice's own original order —
+// never re-sorted.
+let ocrLines = [];
+let ocrIndex = 0;
+let ocrSupplierId = null;
+
+// The photo upload/status handlers (onDeliveryPhotoSelected etc.) are
+// shared between the new invoice-matching choice screen and the
+// original manual-entry form — both offer the same photo capture UI.
+// Without tracking which one is currently showing, a photo selected
+// from the new screen would incorrectly jump to the old manual form
+// after upload. "choice" is the default since that's the entry point
+// views.delivery() now renders first.
+let deliveryPhotoScreen = "choice";
+function rerenderDeliveryPhotoScreen() {
+  if (deliveryPhotoScreen === "manual") renderDelivery();
+  else renderDeliveryChoice();
+}
+
 async function ensureSuppliers() {
   if (SUPPLIERS === null) {
     const all = await Store.getAllSuppliers();
@@ -44,15 +66,34 @@ function currentLocation() {
 // go() now pushes a real history entry; Back replays the previous one
 // via popstate. Only once there's no in-app entry left does Back fall
 // through to actual browser/OS back behavior, which is the correct rule.
+// Desktop-only persistent nav (see style.css's .sidebar, hidden below
+// 1024px) — lives outside #app so go()'s render() never touches it.
+// Re-painted on every navigation; five buttons, cheap enough that a
+// full repaint is simpler and safer than diffing active state by hand.
+const SIDEBAR_VIEW_KEY = {
+  home: "home", categories: "inventory", productList: "inventory", productEntry: "inventory",
+  review: "inventory", done: "inventory", delivery: "delivery", history: "history",
+};
+function paintSidebar(view) {
+  renderSidebar("Restaurant Ops", [
+    { key: "home", label: "Home", icon: "home", onClick: () => go("home") },
+    { key: "inventory", label: "Morning Inventory", icon: "inventory", onClick: () => go("categories") },
+    { key: "delivery", label: "Delivery Receiving", icon: "delivery", onClick: () => go("delivery") },
+    { key: "history", label: "History", icon: "history", onClick: () => go("history") },
+  ], SIDEBAR_VIEW_KEY[view] || "home");
+}
+
 async function go(view, ...args) {
   history.pushState({ view, args }, "", "#" + view);
   await views[view](...args);
+  paintSidebar(view);
   window.scrollTo(0, 0);
 }
 
 window.addEventListener("popstate", (e) => {
   if (e.state && views[e.state.view]) {
     views[e.state.view](...(e.state.args || []));
+    paintSidebar(e.state.view);
     window.scrollTo(0, 0);
   }
   // No state means we've fallen off the front of our own history stack —
@@ -110,6 +151,43 @@ function categoryIcon(categoryName) {
   const key = String(categoryName || "").toLowerCase();
   const match = Object.keys(CATEGORY_ICONS).find((k) => key.includes(k));
   return `<span class="cat-icon">${match ? CATEGORY_ICONS[match] : DEFAULT_CATEGORY_ICON}</span>`;
+}
+
+// Per-product visual identity — NOT real product photography (no image
+// hosting/licensing pipeline available in this environment; see the
+// final report). Each of the 17 catalog products gets a distinct
+// color/shape combination so it's at least visually distinguishable at
+// a glance, including the three Monster variants, which must never look
+// identical to each other. This is an honest, disclosed simplification:
+// a real product image system (section 17) would use actual photography
+// or bespoke illustrations, not tinted line icons.
+const PRODUCT_VISUAL = {
+  "monster energy": { shape: "drinks", color: "#16a34a" },
+  "monster ultra": { shape: "drinks", color: "#64748b" },
+  "monster mango": { shape: "drinks", color: "#f97316" },
+  "bacon": { shape: "meat", color: "#b91c1c" },
+  "stora kött": { shape: "meat", color: "#dc2626" },
+  "small kött": { shape: "meat", color: "#ef4444" },
+  "kycklingburgare crispy": { shape: "meat", color: "#d97706" },
+  "vegoburgare crispy nochick o": { shape: "meat", color: "#65a30d" },
+  "stora bröd": { shape: "bread", color: "#b45309" },
+  "small bröd": { shape: "bread", color: "#c2833f" },
+  "potatis bröd": { shape: "bread", color: "#a16207" },
+  "glutenfri": { shape: "bread", color: "#92400e" },
+  "pommes": { shape: "frozen", color: "#eab308" },
+  "nuggets": { shape: "frozen", color: "#f59e0b" },
+  "chili cheese": { shape: "cheese", color: "#dc2626" },
+  "ost cheddar": { shape: "cheese", color: "#f59e0b" },
+  "grillost": { shape: "cheese", color: "#ca8a04" },
+};
+
+function productIcon(productName, size) {
+  const key = String(productName || "").toLowerCase();
+  const visual = PRODUCT_VISUAL[key];
+  const shape = CATEGORY_ICONS[visual?.shape] || DEFAULT_CATEGORY_ICON;
+  const color = visual?.color || "#2563eb";
+  const dim = size || 40;
+  return `<span class="cat-icon" style="width:${dim}px;height:${dim}px;color:${color};background:${color}1a">${shape}</span>`;
 }
 
 const views = {
@@ -397,9 +475,246 @@ const views = {
       );
       return;
     }
-    renderDelivery();
+    renderDeliveryChoice();
   },
 };
+
+// --- New primary path: match against the invoice (mock OCR for now) ---
+
+function renderDeliveryChoice() {
+  deliveryPhotoScreen = "choice";
+  const loc = deliveryCurrentLocation();
+  render(`
+    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery Receiving</div></div>
+    <div class="screen">
+      <p class="muted">Location: <strong>${loc ? loc.name : "none"}</strong></p>
+
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+        <p class="muted" style="margin-top:0">Photo of invoice</p>
+        ${deliveryPhotoSectionHtml()}
+      </div>
+
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+        <div class="stepper-row"><label>Supplier</label>
+          <select id="ocrSupplier" style="flex:1;margin-left:12px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+            ${SUPPLIERS.map((s) => `<option value="${s.id}">${s.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
+      <div id="deliveryError" class="muted" style="color:#b91c1c;display:none;margin-bottom:10px"></div>
+      <button class="primary" ${!deliveryPhoto ? "disabled" : ""} onclick="startOcrFlow()">
+        ${uiIcon("document", 16)} Match products from this invoice
+      </button>
+      <p class="muted" style="text-align:center;margin:6px 0 0;font-size:12px">Demo extraction — not a real invoice reader yet. See report.</p>
+      <button class="ghost" onclick="renderDelivery()">Enter items manually instead</button>
+    </div>
+  `);
+}
+
+async function startOcrFlow() {
+  ocrSupplierId = document.getElementById("ocrSupplier").value;
+  const lines = await extractInvoiceLines(deliveryPhoto?.file || null);
+  ocrLines = lines.map((line) => {
+    const { product, confidence } = matchProductLine(line.text, PRODUCTS);
+    return {
+      text: line.text,
+      extractedQuantity: line.quantity,
+      product,
+      confidence,
+      needsReview: confidence !== "high",
+      receivedQuantity: line.quantity,
+      resolved: confidence === "high",
+    };
+  });
+  ocrIndex = 0;
+  renderOcrReview();
+}
+
+function ocrProgressList() {
+  return ocrLines.map((l, i) => {
+    const label = l.product ? l.product.name : `${l.text} (needs review)`;
+    let stateClass = "pending", mark = "○";
+    if (i < ocrIndex) { stateClass = "done"; mark = "✓"; }
+    else if (i === ocrIndex) { stateClass = "current"; mark = "→"; }
+    if (l.needsReview && i >= ocrIndex) { stateClass += " needs-review"; }
+    return `<li class="ocr-progress-item ${stateClass}"><span class="ocr-progress-mark">${mark}</span><span>${label} — ${l.extractedQuantity}</span></li>`;
+  }).join("");
+}
+
+function renderOcrReview() {
+  if (ocrIndex >= ocrLines.length) { renderOcrComplete(); return; }
+  const line = ocrLines[ocrIndex];
+  const discrepancy = line.receivedQuantity !== line.extractedQuantity;
+
+  render(`
+    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery #${ocrIndex + 1}/${ocrLines.length}</div></div>
+    <div class="screen delivery-review-layout">
+      <div class="delivery-review-main">
+        <p class="muted">Line ${ocrIndex + 1} of ${ocrLines.length} · from invoice</p>
+        ${deliveryPhoto ? `<button class="ghost" style="margin-top:0" onclick="openInvoiceViewer()">${uiIcon("document", 16)} View original invoice</button>` : ""}
+
+        <div class="generic-entry-card" style="text-align:center">
+          ${line.product ? productIcon(line.product.name, 64) : `<span class="cat-icon" style="width:64px;height:64px;background:var(--color-error-bg);color:var(--color-error)">${uiIcon("alert", 32)}</span>`}
+          <h2 style="margin:12px 0 4px">${line.product ? line.product.name : "Needs review"}</h2>
+          <p class="muted" style="margin:0">Invoice line: "${line.text}"</p>
+
+          ${line.needsReview ? `
+            <div style="margin-top:14px;text-align:left">
+              <p class="muted" style="margin:0 0 6px">${line.product ? `Low-confidence match — confirm or pick the correct product:` : `No confident match — select the correct product:`}</p>
+              <select id="ocrProductPick" style="width:100%;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+                <option value="">— leave unresolved —</option>
+                ${PRODUCTS.map((p) => `<option value="${p.id}" ${line.product?.id === p.id ? "selected" : ""}>${p.name}</option>`).join("")}
+              </select>
+              <button class="pill" style="margin-top:8px" onclick="confirmOcrProductPick()">Use this product</button>
+            </div>
+          ` : ""}
+
+          <div class="stepper-row" style="justify-content:center;gap:20px;margin-top:16px">
+            <label>Received</label>
+            <div class="stepper">
+              <button onclick="adjustOcrReceived(-1)" aria-label="Decrease">${uiIcon("minus", 16)}</button>
+              <input id="ocrReceivedInput" type="number" min="0" step="any" value="${line.receivedQuantity}"
+                style="width:64px;text-align:center;border:none;font-size:18px;font-weight:600" oninput="setOcrReceived(this.value)">
+              <button onclick="adjustOcrReceived(1)" aria-label="Increase">${uiIcon("plus", 16)}</button>
+            </div>
+          </div>
+          <p class="muted" style="margin:6px 0 0">Invoice quantity: ${line.extractedQuantity}</p>
+
+          ${discrepancy ? `
+            <div class="alert-banner" role="status" style="margin-top:14px">
+              ${uiIcon("alert", 18)} <strong>Discrepancy:</strong> received ${line.receivedQuantity}, invoice said ${line.extractedQuantity} (${line.receivedQuantity > line.extractedQuantity ? "+" : ""}${(line.receivedQuantity - line.extractedQuantity)})
+            </div>
+          ` : ""}
+        </div>
+
+        <button class="primary sticky" ${!line.product ? "disabled" : ""} onclick="confirmOcrLine()">
+          ${uiIcon("check", 16)} Confirm & Next
+        </button>
+      </div>
+
+      <aside class="delivery-review-side">
+        <p class="muted" style="margin-top:0">Progress</p>
+        <ul class="ocr-progress-list">${ocrProgressList()}</ul>
+      </aside>
+    </div>
+    <div id="invoiceViewerRoot"></div>
+  `);
+}
+
+function setOcrReceived(val) {
+  ocrLines[ocrIndex].receivedQuantity = val === "" ? 0 : Number(val);
+}
+function adjustOcrReceived(delta) {
+  const line = ocrLines[ocrIndex];
+  line.receivedQuantity = Math.max(0, (Number(line.receivedQuantity) || 0) + delta);
+  renderOcrReview();
+}
+function confirmOcrProductPick() {
+  const id = document.getElementById("ocrProductPick").value;
+  ocrLines[ocrIndex].product = id ? PRODUCTS.find((p) => p.id === id) : null;
+  renderOcrReview();
+}
+function confirmOcrLine() {
+  ocrLines[ocrIndex].resolved = true;
+  ocrIndex++;
+  renderOcrReview();
+}
+
+function openInvoiceViewer() {
+  document.getElementById("invoiceViewerRoot").innerHTML = `
+    <div class="invoice-viewer" role="dialog" aria-modal="true" aria-label="Original invoice" onclick="closeInvoiceViewer(event)">
+      <button class="invoice-viewer-close" onclick="closeInvoiceViewer(event)" aria-label="Close">${uiIcon("close", 22)}</button>
+      <img src="${deliveryPhoto.previewUrl}" alt="Original invoice photo" class="invoice-viewer-img" onclick="this.classList.toggle('zoomed')">
+    </div>
+  `;
+}
+function closeInvoiceViewer(e) {
+  if (e && e.target.classList.contains("invoice-viewer-img") && !e.target.classList.contains("zoomed")) return;
+  document.getElementById("invoiceViewerRoot").innerHTML = "";
+}
+
+function renderOcrComplete() {
+  const resolvedLines = ocrLines.filter((l) => l.product);
+  const skipped = ocrLines.length - resolvedLines.length;
+  const discrepancies = resolvedLines.filter((l) => l.receivedQuantity !== l.extractedQuantity);
+  render(`
+    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Review & Confirm</div></div>
+    <div class="screen">
+      <div class="empty-state" style="padding:24px 0">
+        <span class="cat-icon" style="width:56px;height:56px;background:var(--color-success-bg);color:var(--color-success-text);margin:0 auto var(--space-4)">${uiIcon("check", 28)}</span>
+        <h2>${resolvedLines.length} of ${ocrLines.length} lines matched</h2>
+        <p>${skipped > 0 ? `${skipped} line(s) left unresolved — add them manually afterward if needed.` : "All invoice lines resolved."}</p>
+      </div>
+      ${resolvedLines.map((l) => `
+        <div class="review-row">
+          <span>${l.product.name}</span>
+          <span>${l.receivedQuantity}${l.receivedQuantity !== l.extractedQuantity ? ` <span style="color:var(--color-error)">(invoice: ${l.extractedQuantity})</span>` : ""}</span>
+        </div>
+      `).join("")}
+      ${discrepancies.length ? `<p class="muted" style="color:var(--color-error)">${discrepancies.length} discrepanc${discrepancies.length === 1 ? "y" : "ies"} recorded — will be saved with this delivery.</p>` : ""}
+      <div id="deliveryError" class="muted" style="color:#b91c1c;display:none;margin-top:10px"></div>
+      <button id="submitOcrDeliveryBtn" class="primary sticky" ${resolvedLines.length === 0 ? "disabled" : ""} onclick="submitOcrDelivery()">Confirm Delivery</button>
+    </div>
+  `);
+}
+
+async function submitOcrDelivery() {
+  const loc = deliveryCurrentLocation();
+  const resolvedLines = ocrLines.filter((l) => l.product);
+  const items = resolvedLines.map((l, i) => ({
+    productId: l.product.id,
+    entry: deliveryEntryForProduct(l.product, l.receivedQuantity),
+    invoiceLineOrder: i + 1,
+    extractedText: l.text,
+    extractedQuantity: l.extractedQuantity,
+    matchConfidence: l.confidence,
+    needsReview: l.needsReview,
+  }));
+  const btn = document.getElementById("submitOcrDeliveryBtn");
+  try {
+    await withBusyButton(btn, () => Store.submitDelivery({
+      locationId: loc.id,
+      supplierId: ocrSupplierId,
+      invoiceNumber: null,
+      invoiceDate: new Date().toISOString().slice(0, 10),
+      notes: null,
+      items,
+      documentPath: deliveryPhoto?.status === "uploaded" ? deliveryPhoto.uploadedPath : null,
+      extractionSource: "mock_ocr",
+    }), { busyText: "Confirming…", doneText: "Confirmed ✓" });
+    if (deliveryPhoto?.previewUrl) URL.revokeObjectURL(deliveryPhoto.previewUrl);
+    ocrLines = []; ocrIndex = 0; deliveryPhoto = null;
+    render(`
+      <div class="screen center">
+        <div class="check">✓</div>
+        <h1>Delivery recorded</h1>
+        <p class="muted">Saved for ${loc.name}</p>
+        <button class="primary" onclick="go('home', { force: true })">Back to Home</button>
+      </div>
+    `);
+  } catch (err) {
+    showDeliveryError(err);
+  }
+}
+
+// Maps a confirmed received quantity to whatever entry shape the
+// product's own configuration expects — reuses the SAME generic
+// conversion engine as Morning Inventory (packaging.js), never a
+// per-product if/else. The invoice quantity is assumed to be in the
+// product's outermost configured package unit (e.g. "3" for Ost cheddar
+// means 3 packages) — the same convention a supplier's own invoice
+// typically uses; a product with no package tiers falls back to the
+// original single-tier entry mode untouched.
+function deliveryEntryForProduct(p, qty) {
+  if (p.packages && p.packages.length > 0) {
+    return { mode: "generic", breakdown: { [p.packages[0].name]: qty } };
+  }
+  if (p.base_unit && p.base_unit !== "piece") {
+    return { mode: "generic", breakdown: { [p.base_unit]: qty } };
+  }
+  return { mode: "boxes+pieces", fullBoxes: qty, pieces: 0 };
+}
 
 // Generic package-entry UI: one input per configured unit (e.g. Pommes
 // gets "carton" / "bag" / "kg" fields; Stora kött gets "carton" /
@@ -539,6 +854,7 @@ function deliveryPhotoSectionHtml() {
 }
 
 function renderDelivery() {
+  deliveryPhotoScreen = "manual";
   const loc = deliveryCurrentLocation();
   render(`
     <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery Receiving</div></div>
@@ -620,7 +936,7 @@ async function onDeliveryPhotoSelected(event) {
   document.getElementById("deliveryError").style.display = "none";
 
   deliveryPhoto = { file, previewUrl: URL.createObjectURL(file), uploadedPath: null, status: "uploading" };
-  renderDelivery();
+  rerenderDeliveryPhotoScreen();
   await uploadCurrentDeliveryPhoto();
 }
 
@@ -633,12 +949,12 @@ async function uploadCurrentDeliveryPhoto() {
     console.error(err);
     deliveryPhoto.status = "failed";
   }
-  renderDelivery();
+  rerenderDeliveryPhotoScreen();
 }
 
 function retryDeliveryPhotoUpload() {
   deliveryPhoto.status = "uploading";
-  renderDelivery();
+  rerenderDeliveryPhotoScreen();
   uploadCurrentDeliveryPhoto();
 }
 
@@ -648,7 +964,7 @@ function removeDeliveryPhoto() {
     supabaseClient.storage.from("delivery-documents").remove([deliveryPhoto.uploadedPath]).catch(() => {});
   }
   deliveryPhoto = null;
-  renderDelivery();
+  rerenderDeliveryPhotoScreen();
 }
 
 function addDeliveryItem() {
@@ -796,6 +1112,7 @@ async function boot() {
     // an extra Back step on top of whatever brought them to index.html.
     history.replaceState({ view: "home", args: [] }, "", "#home");
     await views.home();
+    paintSidebar("home");
     window.scrollTo(0, 0);
   } catch (err) {
     showError(err);

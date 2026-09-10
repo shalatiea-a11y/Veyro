@@ -959,6 +959,142 @@ begin
 end;
 $$;
 
+-- =======================================================================
+-- Delivery Receiving: generic conversion parity + invoice-matching audit
+-- trail (mock OCR provider for now — see app.js's ocrProvider). Additive
+-- only: every new column is nullable or defaulted, existing delivery
+-- records and the manual entry_mode path are completely unaffected.
+-- =======================================================================
+alter table delivery_items drop constraint if exists delivery_items_entry_mode_check;
+alter table delivery_items add constraint delivery_items_entry_mode_check
+  check (entry_mode in ('boxes_pieces', 'fraction', 'pieces', 'generic'));
+alter table delivery_items alter column units_per_package_at_entry drop not null;
+alter table delivery_items add column if not exists entered_breakdown jsonb;
+alter table delivery_items add column if not exists packages_at_entry jsonb;
+
+-- Preserves the invoice's own line order — the receiving workflow steps
+-- through lines in this order, never alphabetically or by category.
+alter table delivery_items add column if not exists invoice_line_order integer;
+-- What the (currently mocked) extraction stage read for this line, kept
+-- distinct from received_quantity (what the employee actually confirmed)
+-- forever — correcting a misread invoice line must never erase what the
+-- extraction stage originally produced.
+alter table delivery_items add column if not exists extracted_text text;
+alter table delivery_items add column if not exists extracted_quantity numeric check (extracted_quantity is null or extracted_quantity >= 0);
+alter table delivery_items add column if not exists match_confidence text check (match_confidence is null or match_confidence in ('high', 'medium', 'low', 'none'));
+-- true when extraction/matching could not confidently resolve this line
+-- to one of the existing catalog products — the employee must pick the
+-- correct product themselves; nothing here ever creates a new product.
+alter table delivery_items add column if not exists needs_review boolean not null default false;
+
+-- Distinguishes a delivery entered fully manually (the only path that
+-- existed before this phase) from one that went through the (currently
+-- mocked) extraction workflow — never conflate "confirmed internally"
+-- with "synchronized to an external system", since no such integration
+-- exists yet (see README/report: this is explicitly NOT connected to any
+-- real OCR or Oracle integration).
+alter table deliveries add column if not exists extraction_source text not null default 'manual' check (extraction_source in ('manual', 'mock_ocr'));
+
+create or replace function submit_delivery(
+  p_location_id uuid, p_supplier_id uuid, p_invoice_number text,
+  p_invoice_date date, p_notes text, p_items jsonb, p_document_path text default null,
+  p_extraction_source text default 'manual'
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_org_id uuid := current_org_id();
+  v_delivery_id uuid;
+  v_item jsonb;
+  v_product products%rowtype;
+  v_mode text;
+  v_full_boxes numeric;
+  v_pieces numeric;
+  v_fraction text;
+  v_unit_price numeric;
+  v_received numeric;
+  v_fraction_value numeric;
+  v_breakdown jsonb;
+  v_generic_result jsonb;
+  v_packages_at_entry jsonb;
+begin
+  if v_org_id is null then
+    raise exception 'No organization linked to this account';
+  end if;
+
+  if not exists (select 1 from locations where id = p_location_id and organization_id = v_org_id) then
+    raise exception 'Location does not belong to your organization';
+  end if;
+
+  if current_role_name() = 'employee'
+     and not exists (select 1 from employee_locations where profile_id = auth.uid() and location_id = p_location_id) then
+    raise exception 'You are not assigned to this location';
+  end if;
+
+  if not exists (select 1 from suppliers where id = p_supplier_id and organization_id = v_org_id) then
+    raise exception 'Supplier does not belong to your organization';
+  end if;
+
+  insert into deliveries (organization_id, location_id, supplier_id, received_by, invoice_number, invoice_date, notes, document_path, extraction_source)
+  values (v_org_id, p_location_id, p_supplier_id, auth.uid(), p_invoice_number, p_invoice_date, p_notes, p_document_path, p_extraction_source)
+  returning id into v_delivery_id;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    select * into v_product from products
+      where id = (v_item->>'product_id')::uuid and organization_id = v_org_id;
+    if not found then
+      raise exception 'Product % does not belong to your organization', v_item->>'product_id';
+    end if;
+
+    v_mode := v_item->>'entry_mode';
+    v_full_boxes := nullif(v_item->>'entered_full_boxes', '')::numeric;
+    v_pieces := nullif(v_item->>'entered_pieces', '')::numeric;
+    v_fraction := nullif(v_item->>'entered_fraction', '');
+    v_unit_price := nullif(v_item->>'unit_price', '')::numeric;
+    v_breakdown := null;
+    v_packages_at_entry := null;
+
+    if v_mode = 'boxes_pieces' then
+      v_received := coalesce(v_full_boxes, 0) * v_product.units_per_package + coalesce(v_pieces, 0);
+    elsif v_mode = 'fraction' then
+      v_fraction_value := case v_fraction
+        when 'full' then 1 when '3/4' then 0.75 when '1/2' then 0.5
+        when '1/3' then 1.0/3 when '1/4' then 0.25 else 0 end;
+      v_received := round(v_product.units_per_package * v_fraction_value);
+    elsif v_mode = 'pieces' then
+      v_received := coalesce(v_pieces, 0);
+    elsif v_mode = 'generic' then
+      v_breakdown := v_item->'entered_breakdown';
+      if v_breakdown is null then
+        raise exception 'Missing entered_breakdown for a generic entry';
+      end if;
+      v_generic_result := resolve_generic_inventory_quantity(v_product.id, v_breakdown);
+      v_received := (v_generic_result->>'normalized_quantity')::numeric;
+      v_packages_at_entry := v_generic_result->'packages_at_entry';
+    else
+      raise exception 'Unknown entry mode %', v_mode;
+    end if;
+
+    insert into delivery_items (
+      delivery_id, product_id, entry_mode, entered_full_boxes, entered_pieces,
+      entered_fraction, units_per_package_at_entry, received_quantity, unit_price,
+      entered_breakdown, packages_at_entry, invoice_line_order, extracted_text,
+      extracted_quantity, match_confidence, needs_review
+    ) values (
+      v_delivery_id, v_product.id, v_mode, v_full_boxes, v_pieces,
+      v_fraction, case when v_mode = 'generic' then null else v_product.units_per_package end,
+      v_received, v_unit_price,
+      v_breakdown, v_packages_at_entry, nullif(v_item->>'invoice_line_order', '')::integer,
+      v_item->>'extracted_text', nullif(v_item->>'extracted_quantity', '')::numeric,
+      v_item->>'match_confidence', coalesce((v_item->>'needs_review')::boolean, false)
+    );
+  end loop;
+
+  return v_delivery_id;
+end;
+$$;
+
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
 -- in Supabase Auth (see README), then insert their profiles below.
