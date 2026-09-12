@@ -1279,3 +1279,54 @@ testing on real hardware; a real desktop table view for Inventory
 History (still a card list, just wider); Oracle/external integration
 (correctly out of scope — `product_external_mappings` stays empty
 scaffolding).
+
+## Phase 13, Step 2: verified small gaps fixed (product audit follow-up)
+
+Real bug caught by testing before it ever reached you: extending
+`correct_inventory_item()` with a new `p_breakdown` parameter via
+`create or replace function` did NOT replace the original 6-argument
+function — Postgres treated it as a second overload, and the client's
+existing 6-argument call became ambiguous ("function ... is not
+unique"). Confirmed by reproducing the exact failure against a real
+Postgres instance, then fixed with an explicit `drop function` of the
+old signature before recreating it. Re-verified clean afterward.
+
+**B — Generic inventory correction**: `correct_inventory_item()` now
+supports `entry_mode = 'generic'`, reusing
+`resolve_generic_inventory_quantity()` — no conversion logic duplicated.
+`inventory_item_corrections` gained `previous_breakdown`/`new_breakdown`
+columns so a generic-mode item's audit trail is as complete as the
+original modes'. `storage.js`'s `correctInventoryItem()` now passes the
+breakdown through for generic-mode items. VERIFIED against real
+Postgres: a Pommes-style item (25kg → corrected to 32.5kg) computed
+correctly via the shared engine, audit trail preserved both before/after
+values, a non-admin employee correctly blocked, and the original
+`boxes_pieces` correction path re-tested unaffected (regression check).
+
+**C — Missing indexes**: `inventory_items(product_id)` and
+`delivery_items(product_id)` added. Additive, no behavior change.
+
+**D — Automated RLS regression tests** (`tests/rls.test.js`, 13
+assertions): applies the real `schema.sql` to a real local Postgres
+instance and drives two separate organizations as actual
+RLS-constrained `authenticated` roles (never a superuser bypass).
+Verifies — with a positive control alongside every negative, so a
+"pass" can't just mean a broken query — that Org A cannot see or write
+Org B's products/suppliers/locations, cannot submit inventory into Org
+B's location or with Org B's product_id, that a plain employee cannot
+write `product_packages` or rename a product (RLS silently zeroes the
+affected rows, confirmed distinct from a real admin update), and that
+Org B's admin cannot correct an inventory record that belongs to Org A.
+This closes the exact gap the technical audit flagged: RLS itself was
+already correct, but there was no *repeatable test* proving it — now
+there is. Gracefully skips (exit 0, not a failure) on any machine
+without a local Postgres available, since this is a real integration
+test against the database engine, not a pure-logic test.
+
+**Verified — 147/147 total automated assertions pass** (`npm test`).
+
+**Step 2A (product-name uniqueness constraint) is intentionally NOT
+included in this commit** — it depends on you running a read-only
+duplicate-check query against your live database first (see chat). I
+will not add the constraint until you report back that it's safe to do
+so.

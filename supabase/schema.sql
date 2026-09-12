@@ -1095,6 +1095,107 @@ begin
 end;
 $$;
 
+-- =======================================================================
+-- Phase 13, Step 2: verified small gaps from the technical audit.
+-- All additive. No existing row, policy, or function behavior changes
+-- for anything already working.
+-- =======================================================================
+
+-- C. Missing indexes (read performance only, no behavior change).
+create index if not exists inventory_items_product_idx on inventory_items (product_id);
+create index if not exists delivery_items_product_idx on delivery_items (product_id);
+
+-- B. correct_inventory_item() gains generic-mode parity, the same way
+-- submit_daily_inventory did — reusing resolve_generic_inventory_quantity()
+-- rather than duplicating any conversion logic. The original
+-- boxes_pieces/fraction/pieces branches are untouched.
+alter table inventory_item_corrections add column if not exists previous_breakdown jsonb;
+alter table inventory_item_corrections add column if not exists new_breakdown jsonb;
+
+-- Adding a parameter is NOT a like-for-like replace in Postgres — it
+-- creates a second overload alongside the original 6-argument signature
+-- instead of replacing it (confirmed by testing this exact migration
+-- against a real instance: a 6-arg call from the client became
+-- ambiguous between the two overloads, error "is not unique"). The old
+-- signature must be dropped explicitly first; this only removes an old
+-- callable form, it touches no data.
+drop function if exists correct_inventory_item(uuid, text, numeric, numeric, text, text);
+
+create or replace function correct_inventory_item(
+  p_item_id uuid, p_entry_mode text, p_full_boxes numeric, p_pieces numeric,
+  p_fraction text, p_reason text, p_breakdown jsonb default null
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_item inventory_items%rowtype;
+  v_org_id uuid;
+  v_new_normalized numeric;
+  v_fraction_value numeric;
+  v_generic_result jsonb;
+begin
+  if current_role_name() != 'admin' then
+    raise exception 'Only an admin can correct a submitted inventory count';
+  end if;
+
+  select ii.* into v_item from inventory_items ii
+    join inventory_submissions s on s.id = ii.submission_id
+    where ii.id = p_item_id and s.organization_id = current_org_id();
+  if not found then
+    raise exception 'Inventory item not found in your organization';
+  end if;
+
+  -- Recompute using the package size that applied AT THE TIME of the
+  -- original count (units_per_package_at_entry), never the product's
+  -- current configuration — this is what keeps historical inventory
+  -- interpretable even after a product's package size changes later.
+  -- A generic-mode item has no units_per_package_at_entry (it uses the
+  -- product's live product_packages instead, same as at submission time —
+  -- there is currently no per-entry package-hierarchy snapshot to pin to,
+  -- matching how submit_daily_inventory itself already resolves generic
+  -- entries against the product's current configuration).
+  if p_entry_mode = 'boxes_pieces' then
+    v_new_normalized := coalesce(p_full_boxes, 0) * v_item.units_per_package_at_entry + coalesce(p_pieces, 0);
+  elsif p_entry_mode = 'fraction' then
+    v_fraction_value := case p_fraction
+      when 'full' then 1 when '3/4' then 0.75 when '1/2' then 0.5
+      when '1/3' then 1.0/3 when '1/4' then 0.25 else 0 end;
+    v_new_normalized := round(v_item.units_per_package_at_entry * v_fraction_value);
+  elsif p_entry_mode = 'pieces' then
+    v_new_normalized := coalesce(p_pieces, 0);
+  elsif p_entry_mode = 'generic' then
+    if p_breakdown is null then
+      raise exception 'Missing breakdown for a generic correction';
+    end if;
+    v_generic_result := resolve_generic_inventory_quantity(v_item.product_id, p_breakdown);
+    v_new_normalized := (v_generic_result->>'normalized_quantity')::numeric;
+  else
+    raise exception 'Unknown entry mode %', p_entry_mode;
+  end if;
+
+  insert into inventory_item_corrections (
+    item_id, previous_entry_mode, previous_full_boxes, previous_pieces, previous_fraction,
+    previous_normalized_quantity, previous_breakdown,
+    new_entry_mode, new_full_boxes, new_pieces, new_fraction,
+    new_normalized_quantity, new_breakdown, reason, corrected_by
+  ) values (
+    v_item.id, v_item.entry_mode, v_item.entered_full_boxes, v_item.entered_pieces, v_item.entered_fraction,
+    v_item.normalized_quantity, v_item.entered_breakdown,
+    p_entry_mode, p_full_boxes, p_pieces, p_fraction,
+    v_new_normalized, p_breakdown, p_reason, auth.uid()
+  );
+
+  update inventory_items set
+    entry_mode = p_entry_mode, entered_full_boxes = p_full_boxes, entered_pieces = p_pieces,
+    entered_fraction = p_fraction, normalized_quantity = v_new_normalized,
+    entered_breakdown = p_breakdown
+  where id = v_item.id;
+
+  return v_item.id;
+end;
+$$;
+
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
 -- in Supabase Auth (see README), then insert their profiles below.

@@ -359,14 +359,19 @@ const Store = (() => {
   // preserving what was there before. RLS also enforces admin-only, this
   // is a second layer, not the boundary.
   async function correctInventoryItem(itemId, entry, reason) {
-    const { data, error } = await supabaseClient.rpc("correct_inventory_item", {
-      p_item_id: itemId,
-      p_entry_mode: MODE_TO_DB[entry.mode],
-      p_full_boxes: entry.fullBoxes ?? null,
-      p_pieces: entry.pieces ?? null,
-      p_fraction: entry.fraction ?? null,
-      p_reason: reason || null,
-    });
+    const { data, error } = await supabaseClient.rpc("correct_inventory_item", entry.mode === "generic"
+      ? {
+        p_item_id: itemId, p_entry_mode: "generic", p_full_boxes: null, p_pieces: null,
+        p_fraction: null, p_reason: reason || null, p_breakdown: entry.breakdown,
+      }
+      : {
+        p_item_id: itemId,
+        p_entry_mode: MODE_TO_DB[entry.mode],
+        p_full_boxes: entry.fullBoxes ?? null,
+        p_pieces: entry.pieces ?? null,
+        p_fraction: entry.fraction ?? null,
+        p_reason: reason || null,
+      });
     if (error) throw error;
     return data;
   }
