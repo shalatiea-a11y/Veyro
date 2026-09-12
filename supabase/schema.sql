@@ -1196,6 +1196,17 @@ begin
 end;
 $$;
 
+-- =======================================================================
+-- Phase 13, Step 3: real OCR extraction went live via the "extract-invoice"
+-- Edge Function (see supabase/functions/extract-invoice/). 'mock_ocr' is
+-- kept (never dropped) so already-submitted deliveries from the mocked
+-- phase keep their honest label; 'real_ocr' distinguishes deliveries
+-- whose lines actually came from a live provider call from here on.
+-- =======================================================================
+alter table deliveries drop constraint if exists deliveries_extraction_source_check;
+alter table deliveries add constraint deliveries_extraction_source_check
+  check (extraction_source in ('manual', 'mock_ocr', 'real_ocr'));
+
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
 -- in Supabase Auth (see README), then insert their profiles below.

@@ -1330,3 +1330,76 @@ included in this commit** — it depends on you running a read-only
 duplicate-check query against your live database first (see chat). I
 will not add the constraint until you report back that it's safe to do
 so.
+
+## Phase 13, Step 3: real OCR — mock removed as the final implementation
+
+Per explicit direction: mock OCR is no longer acceptable as the final
+state. Built the real thing, provider chosen and confirmed by the
+project owner after a real comparison (Anthropic Claude Vision vs. Azure
+Document Intelligence vs. Google Document AI) — Claude Vision selected
+for pragmatic reasons (no new cloud account, strong Swedish-text
+handling, and the existing per-line employee-confirmation workflow
+already covers the main risk a dedicated invoice parser would otherwise
+reduce: occasional digit misreads).
+
+**Architecture — the adapter boundary held.** Only two files changed to
+go from mock to real:
+- `supabase/functions/extract-invoice/index.ts` (new): a Supabase Edge
+  Function — Deno, runs server-side. **This is the only place the
+  Anthropic API key exists.** It downloads the invoice photo using the
+  *caller's own session* (not a service-role key), so Supabase Storage's
+  existing RLS policies decide what it can read — no new authorization
+  logic was introduced. Sends the image to Claude with a prompt that
+  explicitly instructs: preserve original line order, never invent a
+  line, never translate/rename text, return `null` rather than guess.
+  Returns `{ supplierName, invoiceNumber, invoiceDate, lines: [{ text,
+  quantity, unit, unitPrice }] }` — it has no concept of "the product
+  catalog" and cannot reference or create a product.
+- `ocrProvider.js` (rewritten): now a thin client that calls this
+  function by name via `supabaseClient.functions.invoke()`. Everything
+  downstream — `productMatcher.js`, the one-line review UI, discrepancy
+  detection, persistence — is completely unchanged code, because the
+  contract (`{ lines: [...] }`) didn't change shape, only its source.
+- `app.js`: `startOcrFlow()` now passes the uploaded photo's real
+  storage path (not a File object) and requires the upload to have
+  actually finished first; auto-selects a supplier when the extracted
+  name confidently matches one already on file; carries invoice
+  number/date through to submission.
+- Schema: `deliveries.extraction_source` gained `'real_ocr'` as a third
+  allowed value (`'manual'`/`'mock_ocr'` kept, never dropped, so
+  already-submitted mock-phase deliveries keep their honest label).
+
+**Security, checked directly against the code:** the API key exists
+only as `Deno.env.get("ANTHROPIC_API_KEY")` inside the Edge Function —
+grep of the entire repository confirms no key, token, or secret-shaped
+string was committed anywhere in this change. The deployment README
+(`supabase/functions/extract-invoice/README.md`) tells you exactly
+where to create the key (console.anthropic.com) and how to configure it
+(`supabase secrets set`, never as a file in this repo).
+
+**Verified, precisely:**
+- The client-side half of the pipeline — matching, one-line review,
+  discrepancy detection, invoice-order preservation, and persistence
+  with the full audit trail — is LOCALLY VERIFIED: `tests/delivery-ocr.test.js`
+  (23 assertions, up from 21) drives the real `app.js` code with a
+  *mocked* `supabaseClient.functions.invoke()` response, proving
+  everything downstream of extraction is correct.
+- The schema change (`real_ocr` as an allowed value) is LOCALLY VERIFIED
+  against a real Postgres instance, applied fresh and re-run for
+  idempotency.
+- **The actual Edge Function code, the real network call to Claude, and
+  a real end-to-end invoice read are NOT VERIFIED.** I cannot deploy a
+  Supabase Edge Function or call the Anthropic API from this
+  environment — there is no Supabase CLI session or API credential
+  available to me here. This requires you to deploy it and test it with
+  a real invoice photo (see the deployment README) before it's genuinely
+  proven, not just built.
+
+Total: 149/149 automated assertions pass (`npm test`). `sw.js` bumped to
+`rios-v19`.
+
+**Still pending from you before I continue further:**
+1. The read-only duplicate-product-name check (Step 2A) — I have not
+   added the uniqueness constraint yet.
+2. Deploying `extract-invoice` and configuring the Anthropic key, then
+   trying a real invoice — I cannot do either step myself.

@@ -28,6 +28,8 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024; // matches the bucket's file_size_limit
 let ocrLines = [];
 let ocrIndex = 0;
 let ocrSupplierId = null;
+let ocrInvoiceNumber = null;
+let ocrInvoiceDate = null;
 
 // The photo upload/status handlers (onDeliveryPhotoSelected etc.) are
 // shared between the new invoice-matching choice screen and the
@@ -479,7 +481,7 @@ const views = {
   },
 };
 
-// --- New primary path: match against the invoice (mock OCR for now) ---
+// --- Primary path: match against the invoice via real OCR extraction ---
 
 function renderDeliveryChoice() {
   deliveryPhotoScreen = "choice";
@@ -503,10 +505,10 @@ function renderDeliveryChoice() {
       </div>
 
       <div id="deliveryError" class="muted" style="color:#b91c1c;display:none;margin-bottom:10px"></div>
-      <button class="primary" ${!deliveryPhoto ? "disabled" : ""} onclick="startOcrFlow()">
+      <button class="primary" ${deliveryPhoto?.status !== "uploaded" ? "disabled" : ""} onclick="startOcrFlow()">
         ${uiIcon("document", 16)} Match products from this invoice
       </button>
-      <p class="muted" style="text-align:center;margin:6px 0 0;font-size:12px">Demo extraction — not a real invoice reader yet. See report.</p>
+      ${deliveryPhoto && deliveryPhoto.status !== "uploaded" && deliveryPhoto.status !== "failed" ? `<p class="muted" style="text-align:center;margin:6px 0 0;font-size:12px">Waiting for the photo to finish uploading…</p>` : ""}
       <button class="ghost" onclick="renderDelivery()">Enter items manually instead</button>
     </div>
   `);
@@ -514,21 +516,56 @@ function renderDeliveryChoice() {
 
 async function startOcrFlow() {
   ocrSupplierId = document.getElementById("ocrSupplier").value;
-  const lines = await extractInvoiceLines(deliveryPhoto?.file || null);
-  ocrLines = lines.map((line) => {
-    const { product, confidence } = matchProductLine(line.text, PRODUCTS);
-    return {
-      text: line.text,
-      extractedQuantity: line.quantity,
-      product,
-      confidence,
-      needsReview: confidence !== "high",
-      receivedQuantity: line.quantity,
-      resolved: confidence === "high",
-    };
-  });
-  ocrIndex = 0;
-  renderOcrReview();
+  const errBox = document.getElementById("deliveryError");
+  if (errBox) errBox.style.display = "none";
+  const btn = document.querySelector('button[onclick="startOcrFlow()"]');
+  try {
+    await withBusyButton(btn, async () => {
+      // extract-invoice needs the photo already uploaded to Storage —
+      // renderDeliveryChoice() only enables this button once status is
+      // "uploaded", so uploadedPath should always be set here; the
+      // explicit check is a safety net, not the primary gate.
+      if (!deliveryPhoto || deliveryPhoto.status !== "uploaded" || !deliveryPhoto.uploadedPath) {
+        throw new Error("The photo hasn't finished uploading yet. Wait a moment and try again.");
+      }
+      const result = await extractInvoiceLines(deliveryPhoto.uploadedPath);
+      ocrInvoiceNumber = result.invoiceNumber || null;
+      ocrInvoiceDate = result.invoiceDate || null;
+      // If the extracted supplier name confidently matches one already
+      // on file, pre-select it — the employee already chose one
+      // manually before extraction, so this only ever overrides that
+      // choice with something read directly off the same invoice, never
+      // introduces an unreviewed guess silently (they can still see and
+      // change the dropdown before confirming the first line — the
+      // supplier field is not re-shown after this point, matching the
+      // existing one-supplier-per-delivery flow).
+      if (result.supplierName) {
+        const match = SUPPLIERS.find((s) => s.name.toLowerCase().trim() === String(result.supplierName).toLowerCase().trim());
+        if (match) ocrSupplierId = match.id;
+      }
+      ocrLines = result.lines.map((line) => {
+        const { product, confidence } = matchProductLine(line.text, PRODUCTS);
+        return {
+          text: line.text,
+          extractedQuantity: line.quantity,
+          unit: line.unit || null,
+          unitPrice: line.unitPrice ?? null,
+          product,
+          confidence,
+          needsReview: confidence !== "high",
+          receivedQuantity: line.quantity,
+          resolved: confidence === "high",
+        };
+      });
+      if (ocrLines.length === 0) {
+        throw new Error("No line items could be read from this photo. Try a clearer photo, or enter items manually.");
+      }
+      ocrIndex = 0;
+    }, { busyText: "Reading invoice…", doneText: "Done ✓" });
+    renderOcrReview();
+  } catch (err) {
+    showDeliveryError(err);
+  }
 }
 
 function ocrProgressList() {
@@ -670,21 +707,22 @@ async function submitOcrDelivery() {
     extractedQuantity: l.extractedQuantity,
     matchConfidence: l.confidence,
     needsReview: l.needsReview,
+    unitPrice: l.unitPrice ?? null,
   }));
   const btn = document.getElementById("submitOcrDeliveryBtn");
   try {
     await withBusyButton(btn, () => Store.submitDelivery({
       locationId: loc.id,
       supplierId: ocrSupplierId,
-      invoiceNumber: null,
-      invoiceDate: new Date().toISOString().slice(0, 10),
+      invoiceNumber: ocrInvoiceNumber,
+      invoiceDate: ocrInvoiceDate || new Date().toISOString().slice(0, 10),
       notes: null,
       items,
       documentPath: deliveryPhoto?.status === "uploaded" ? deliveryPhoto.uploadedPath : null,
-      extractionSource: "mock_ocr",
+      extractionSource: "real_ocr",
     }), { busyText: "Confirming…", doneText: "Confirmed ✓" });
     if (deliveryPhoto?.previewUrl) URL.revokeObjectURL(deliveryPhoto.previewUrl);
-    ocrLines = []; ocrIndex = 0; deliveryPhoto = null;
+    ocrLines = []; ocrIndex = 0; deliveryPhoto = null; ocrInvoiceNumber = null; ocrInvoiceDate = null;
     render(`
       <div class="screen center">
         <div class="check">✓</div>

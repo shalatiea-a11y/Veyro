@@ -23,6 +23,37 @@ window.URL.createObjectURL = () => "blob:fake-preview";
 window.URL.revokeObjectURL = () => {};
 
 window.Auth = { requireSession: async () => ({}), signOut: () => {} };
+
+// ocrProvider.js now calls the REAL "extract-invoice" Edge Function via
+// supabaseClient.functions.invoke() — there is no local fallback logic
+// left to test in that file itself (by design: the whole point of the
+// adapter boundary is that ocrProvider.js is a thin, untestable-without-
+// a-real-provider pass-through). This mock stands in for what a real
+// invocation returns, so everything AFTER extraction — matching,
+// one-line review, discrepancy detection, persistence — is still
+// exercised for real. The actual network call to Claude is NOT covered
+// here; that requires real credentials and is NOT VERIFIED by this file
+// (see the phase report).
+const MOCK_INVOICE_RESPONSE = {
+  supplierName: "Fresh Foods Co",
+  invoiceNumber: "INV-1042",
+  invoiceDate: "2026-01-15",
+  lines: [
+    { text: "Ost cheddar", quantity: 3, unit: null, unitPrice: null },
+    { text: "Stora bröd", quantity: 4, unit: null, unitPrice: null },
+    { text: "Bacon", quantity: 2, unit: null, unitPrice: null },
+    { text: "Pommes", quantity: 5, unit: null, unitPrice: null },
+  ],
+};
+window.supabaseClient = {
+  functions: {
+    invoke: async (name, { body } = {}) => {
+      if (name !== "extract-invoice") return { data: null, error: new Error(`unexpected function: ${name}`) };
+      return { data: MOCK_INVOICE_RESPONSE, error: null };
+    },
+  },
+};
+
 window.eval(fs.readFileSync(path.join(__dirname, "..", "ui.js"), "utf8"));
 window.eval(fs.readFileSync(path.join(__dirname, "..", "packaging.js"), "utf8"));
 window.eval(fs.readFileSync(path.join(__dirname, "..", "ocrProvider.js"), "utf8"));
@@ -122,7 +153,9 @@ async function run() {
 
   const submitted = window.Store.submitDeliveryCalls[0];
   check("submitDelivery was called exactly once", window.Store.submitDeliveryCalls.length === 1);
-  check("extraction_source is honestly recorded as 'mock_ocr', never faked as a real sync", submitted?.extractionSource === "mock_ocr");
+  check("extraction_source is honestly recorded as 'real_ocr' (a real Edge Function call was made, even though this test mocks its response)", submitted?.extractionSource === "real_ocr");
+  check("invoice metadata read by the (mocked) extraction is passed through to submission", submitted?.invoiceNumber === "INV-1042" && submitted?.invoiceDate === "2026-01-15");
+  check("a confidently-matched supplier name from the invoice auto-selects the existing supplier", submitted?.supplierId === "sup1");
   check("all 4 resolved lines were submitted, in original invoice order (invoiceLineOrder 1..4)",
     submitted?.items.length === 4 && submitted.items.map((it) => it.invoiceLineOrder).join(",") === "1,2,3,4");
 
