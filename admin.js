@@ -84,6 +84,17 @@ async function renderProducts() {
       <div class="stepper-row"><label>Units per package</label><input name="unitsPerPackage" type="number" min="1" required style="flex:1;margin-left:12px;padding:8px;border:1px solid #e5e7eb;border-radius:8px"></div>
       <button class="primary" type="submit" style="margin-top:10px">Add product</button>
     </form>
+    <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:16px">
+      <label class="pill" style="cursor:pointer">
+        Upload multiple photos at once
+        <input type="file" accept="image/*" multiple style="display:none" onchange="batchUploadProductPhotos(this)">
+      </label>
+      <p class="muted" style="margin:8px 0 0;font-size:13px">
+        Name each file after the product it's a photo of (e.g. "Pommes.jpg", "Ost cheddar.png") —
+        it's matched to the catalog by that name. Anything that doesn't match a product is skipped and listed below, so you can add those one at a time instead.
+      </p>
+      <div id="batchUploadResult" style="margin-top:10px;font-size:13px"></div>
+    </div>
     ${products.map((p) => `
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 16px;margin-bottom:10px">
         <div class="list-row" style="cursor:default;padding:0;border:none">
@@ -125,6 +136,49 @@ async function uploadProductPhoto(productId, input) {
     await Store.uploadProductImage(productId, file);
     await renderProducts();
   } catch (err) { showError(err); }
+}
+
+// Matches each selected file's name (minus extension) against the real
+// catalog — exact match first, then substring either direction — so a
+// batch of correctly-named photos (e.g. from a phone's camera roll,
+// renamed to match the product) can be uploaded in one go instead of
+// one file input per product. Never guesses a product for a file that
+// doesn't match; those are reported back, not silently dropped.
+async function batchUploadProductPhotos(input) {
+  const files = [...(input.files || [])];
+  if (files.length === 0) return;
+  const resultEl = document.getElementById("batchUploadResult");
+  resultEl.textContent = `Uploading 0/${files.length}…`;
+
+  const matched = [];
+  const unmatched = [];
+  for (const file of files) {
+    const stem = file.name.replace(/\.[^.]+$/, "").trim().toLowerCase();
+    const product = PRODUCTS_CACHE.find((p) => p.name.toLowerCase() === stem)
+      || PRODUCTS_CACHE.find((p) => p.name.toLowerCase().includes(stem) || stem.includes(p.name.toLowerCase()));
+    if (product) matched.push({ file, product });
+    else unmatched.push(file.name);
+  }
+
+  let done = 0;
+  const failed = [];
+  for (const { file, product } of matched) {
+    try {
+      await Store.uploadProductImage(product.id, file);
+    } catch (err) {
+      failed.push(`${file.name} (${err.message})`);
+    }
+    done++;
+    resultEl.textContent = `Uploading ${done}/${matched.length}…`;
+  }
+
+  const parts = [`${matched.length - failed.length} of ${files.length} photos uploaded and matched to a product.`];
+  if (failed.length) parts.push(`Failed: ${failed.join(", ")}.`);
+  if (unmatched.length) parts.push(`No matching product for: ${unmatched.join(", ")} — rename to match the product name and try again, or use "Add photo" on that product directly.`);
+  resultEl.innerHTML = parts.map((p) => `<div>${p}</div>`).join("");
+  input.value = "";
+  await renderProducts();
+  document.getElementById("batchUploadResult").innerHTML = parts.map((p) => `<div>${p}</div>`).join("");
 }
 
 function productPackageSummary(p) {
