@@ -53,6 +53,7 @@ const Store = (() => {
       unit_volume_ml: p.unit_volume_ml,
       net_weight_kg: p.net_weight_kg,
       open_piece_notes: p.open_piece_notes,
+      image_url: p.image_url,
       packages: (p.product_packages || [])
         .slice()
         .sort((a, b) => a.sort_order - b.sort_order)
@@ -254,6 +255,29 @@ const Store = (() => {
       package_unit: packageUnit, units_per_package: unitsPerPackage,
     });
     if (error) throw error;
+  }
+
+  // Product photo — uploaded to the PUBLIC "product-images" bucket (unlike
+  // delivery documents, these aren't sensitive: they're just what the item
+  // looks like, and a public URL means every product list renders an <img>
+  // instantly with no signed-URL round-trip per row. RLS on the bucket
+  // still restricts who can upload; only who can view is public.
+  async function uploadProductImage(productId, file) {
+    const { organization_id } = requireProfile();
+    const ext = (file.name?.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const path = `${organization_id}/${productId}.${ext}`;
+    const { error: upErr } = await supabaseClient.storage.from("product-images").upload(path, file, {
+      contentType: file.type || "image/jpeg",
+      upsert: true,
+    });
+    if (upErr) throw upErr;
+    const { data } = supabaseClient.storage.from("product-images").getPublicUrl(path);
+    // Cache-bust: upsert keeps the same path, so browsers/CDN would
+    // otherwise keep serving the old photo after a replacement upload.
+    const url = `${data.publicUrl}?v=${Date.now()}`;
+    const { error: updErr } = await supabaseClient.from("products").update({ image_url: url }).eq("id", productId);
+    if (updErr) throw updErr;
+    return url;
   }
 
   async function setProductActive(id, active) {
@@ -538,6 +562,7 @@ const Store = (() => {
     createProduct,
     setProductPackages,
     updateProductBaseUnit,
+    uploadProductImage,
     setProductActive,
     getAllLocations,
     createLocation,

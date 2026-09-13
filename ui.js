@@ -37,6 +37,80 @@ function uiIcon(name, size = 18) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${UI_ICONS[name] || DEFAULT_UI_ICON}</svg>`;
 }
 
+// Veyro wordmark. `animate` plays the draw-in once (sign-in/sign-up/join
+// screens, each rendered a single time); pass false for the sidebar,
+// which repaints on every navigation and shouldn't replay motion there.
+function veyroLogo(size = 28, animate = true) {
+  return `<span class="veyro-logo ${animate ? "veyro-logo-animate" : ""}" style="--logo-size:${size}px">
+    <svg class="veyro-logo-mark" width="${size}" height="${size}" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <path d="M6 9l14 22L34 9" stroke="var(--color-brand)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <span class="veyro-logo-text">Veyro</span>
+  </span>`;
+}
+
+// Consistent flat line-icon set for category tiles, keyed by category
+// name (case-insensitive substring match, since categories are free text
+// entered by an admin). Falls back to a plain box icon for any category
+// name that doesn't match. Shared across app.js/admin.js/manager.js.
+const CATEGORY_ICONS = {
+  meat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><circle cx="12" cy="16" r="5"/></svg>`,
+  bread: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 5 0 0 1 16 0v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 12v2M12 11v3M16 12v2"/></svg>`,
+  drinks: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M7 9h10"/></svg>`,
+  frozen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11"/></svg>`,
+  cheese: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l9-11 9 11z"/><circle cx="12" cy="15" r=".6" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r=".6" fill="currentColor" stroke="none"/></svg>`,
+  vegetable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c-4-1-7-4-7-9a5 5 0 0 1 9-3 5 5 0 0 1 5 9c-1 2-4 3-7 3z"/><path d="M12 9V4"/></svg>`,
+  sauce: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 6 5 9a5 5 0 0 1-10 0c0-3 2-6 5-9z"/></svg>`,
+};
+const DEFAULT_CATEGORY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/></svg>`;
+
+function categoryIcon(categoryName) {
+  const key = String(categoryName || "").toLowerCase();
+  const match = Object.keys(CATEGORY_ICONS).find((k) => key.includes(k));
+  return `<span class="cat-icon">${match ? CATEGORY_ICONS[match] : DEFAULT_CATEGORY_ICON}</span>`;
+}
+
+// Per-product visual identity fallback — a distinct color/shape combo per
+// catalog product (including the three Monster variants, which must
+// never look identical to each other), used only when a product has no
+// real uploaded photo yet (see productIcon() below).
+const PRODUCT_VISUAL = {
+  "monster energy": { shape: "drinks", color: "#16a34a" },
+  "monster ultra": { shape: "drinks", color: "#64748b" },
+  "monster mango": { shape: "drinks", color: "#f97316" },
+  "bacon": { shape: "meat", color: "#b91c1c" },
+  "stora kött": { shape: "meat", color: "#dc2626" },
+  "small kött": { shape: "meat", color: "#ef4444" },
+  "kycklingburgare crispy": { shape: "meat", color: "#d97706" },
+  "vegoburgare crispy nochick o": { shape: "meat", color: "#65a30d" },
+  "stora bröd": { shape: "bread", color: "#b45309" },
+  "small bröd": { shape: "bread", color: "#c2833f" },
+  "potatis bröd": { shape: "bread", color: "#a16207" },
+  "glutenfri": { shape: "bread", color: "#92400e" },
+  "pommes": { shape: "frozen", color: "#eab308" },
+  "nuggets": { shape: "frozen", color: "#f59e0b" },
+  "chili cheese": { shape: "cheese", color: "#dc2626" },
+  "ost cheddar": { shape: "cheese", color: "#f59e0b" },
+  "grillost": { shape: "cheese", color: "#ca8a04" },
+};
+
+// Accepts either a product object (preferred — checked for a real uploaded
+// photo first) or a bare name (legacy call sites, always falls back to the
+// color icon since there's no image_url to check).
+function productIcon(product, size) {
+  const name = typeof product === "string" ? product : product?.name;
+  const imageUrl = typeof product === "object" ? product?.image_url : null;
+  const dim = size || 40;
+  if (imageUrl) {
+    return `<img class="product-photo" src="${imageUrl}" alt="" width="${dim}" height="${dim}" style="width:${dim}px;height:${dim}px" loading="lazy">`;
+  }
+  const key = String(name || "").toLowerCase();
+  const visual = PRODUCT_VISUAL[key];
+  const shape = CATEGORY_ICONS[visual?.shape] || DEFAULT_CATEGORY_ICON;
+  const color = visual?.color || "#2563eb";
+  return `<span class="cat-icon" style="width:${dim}px;height:${dim}px;color:${color};background:${color}1a">${shape}</span>`;
+}
+
 // Renders the persistent desktop sidebar (hidden by CSS below 1024px).
 // `links`: [{ key, label, icon, onClick }]. `activeKey` highlights the
 // current section. Lives outside whatever the page's router

@@ -1,6 +1,6 @@
 {
-  "name": "Restaurant Ops — Inventory",
-  "short_name": "Rest. Ops",
+  "name": "Veyro — Inventory",
+  "short_name": "Veyro",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

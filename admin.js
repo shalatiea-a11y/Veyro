@@ -61,7 +61,7 @@ async function render() {
 }
 
 function paintSidebar() {
-  renderSidebar("Restaurant Ops", [
+  renderSidebar(veyroLogo(20, false), [
     { key: "products", label: "Products", icon: "inventory", onClick: () => { tab = "products"; render(); } },
     { key: "locations", label: "Locations", icon: "location", onClick: () => { tab = "locations"; render(); } },
     { key: "suppliers", label: "Suppliers", icon: "suppliers", onClick: () => { tab = "suppliers"; render(); } },
@@ -87,8 +87,15 @@ async function renderProducts() {
     ${products.map((p) => `
       <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:12px 16px;margin-bottom:10px">
         <div class="list-row" style="cursor:default;padding:0;border:none">
-          <span>${p.name} <span class="muted">— ${p.category}, 1 ${p.package_unit} = ${p.units_per_package} pcs</span></span>
+          <span style="display:flex;align-items:center;gap:10px">
+            ${productIcon(p, 40)}
+            <span>${p.name} <span class="muted">— ${p.category}, 1 ${p.package_unit} = ${p.units_per_package} pcs</span></span>
+          </span>
           <div style="display:flex;gap:8px">
+            <label class="pill" style="cursor:pointer">
+              ${p.image_url ? "Replace photo" : "Add photo"}
+              <input type="file" accept="image/*" style="display:none" onchange="uploadProductPhoto('${p.id}', this)">
+            </label>
             <button class="pill" onclick="togglePackageEditor('${p.id}')">${productPackageSummary(p)}</button>
             <button class="pill" onclick="toggleProduct('${p.id}', ${!p.active})">${p.active ? "Deactivate" : "Reactivate"}</button>
           </div>
@@ -109,6 +116,15 @@ async function renderProducts() {
       await renderProducts();
     } catch (err) { showError(err); }
   });
+}
+
+async function uploadProductPhoto(productId, input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    await Store.uploadProductImage(productId, file);
+    await renderProducts();
+  } catch (err) { showError(err); }
 }
 
 function productPackageSummary(p) {

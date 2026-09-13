@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Restaurant Ops — Finish setup</title>
+<title>Veyro — Finish setup</title>
 <meta name="theme-color" content="#12141d">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -12,6 +12,7 @@
 </head>
 <body>
 <div class="screen" style="padding-top:40px;max-width:360px">
+  <div id="logoSlot" style="margin-bottom:18px"></div>
   <h1>Finish setting up</h1>
   <p class="muted">You're signed in, but your account isn't linked to an organization yet. Enter your invite code to finish.</p>
 
@@ -32,6 +33,7 @@
 <script src="storage.js"></script>
 <script src="ui.js"></script>
 <script>
+  document.getElementById("logoSlot").innerHTML = veyroLogo(28);
   (async () => {
     await Auth.requireSession();
     try {

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Restaurant Ops — Join your team</title>
+<title>Veyro — Join your team</title>
 <meta name="theme-color" content="#12141d">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -12,6 +12,7 @@
 </head>
 <body>
 <div class="screen" style="padding-top:40px;max-width:360px">
+  <div id="logoSlot" style="margin-bottom:18px"></div>
   <h1>Join your team</h1>
   <p class="muted">Enter the invite code your manager or admin shared with you.</p>
 
@@ -41,6 +42,7 @@
 <script src="storage.js"></script>
 <script src="ui.js"></script>
 <script>
+  document.getElementById("logoSlot").innerHTML = veyroLogo(28);
   document.getElementById("joinBtn").addEventListener("click", async () => {
     const btn = document.getElementById("joinBtn");
     const code = document.getElementById("code").value.trim().toUpperCase();

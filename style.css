@@ -34,8 +34,8 @@
   --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
   --shadow-md: 0 4px 16px rgba(0,0,0,.08);
 
-  --transition-fast: 150ms ease;
-  --transition-base: 200ms ease;
+  --transition-fast: 100ms ease;
+  --transition-base: 130ms ease;
 
   --sidebar-width: 240px;
 }
@@ -203,10 +203,40 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
    replacement for it. Short and cheap: opacity + a few px of translate,
    well under the 150-250ms guidance. */
 .screen { animation: screen-in var(--transition-base) ease-out; }
-@keyframes screen-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes screen-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .screen { animation: none; }
 }
+
+/* Veyro wordmark — a stroke-draw checkmark-style glyph plus the name
+   fading in just after. Animated (.veyro-logo-animate) only where it's
+   seen once per visit (sign-in/sign-up/join); the sidebar uses the same
+   markup without the animation class so repainting it on every
+   navigation (see paintSidebar()) never re-triggers motion. */
+.veyro-logo { display: inline-flex; align-items: center; gap: 8px; }
+.veyro-logo-text {
+  font-weight: 800; letter-spacing: -0.02em; color: var(--color-brand-dark);
+  font-size: calc(var(--logo-size, 28px) * 0.62);
+}
+.veyro-logo-animate .veyro-logo-mark path {
+  stroke-dasharray: 70; stroke-dashoffset: 70;
+  animation: veyro-draw 550ms ease-out forwards;
+}
+.veyro-logo-animate .veyro-logo-text {
+  opacity: 0; transform: translateY(3px);
+  animation: veyro-text-in 350ms ease-out 250ms forwards;
+}
+@keyframes veyro-draw { to { stroke-dashoffset: 0; } }
+@keyframes veyro-text-in { to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .veyro-logo-animate .veyro-logo-mark path,
+  .veyro-logo-animate .veyro-logo-text { animation: none; stroke-dashoffset: 0; opacity: 1; transform: none; }
+}
+
+/* Real product photo, once uploaded via Admin — same footprint as the
+   color-icon fallback (.cat-icon) so swapping one for the other never
+   reflows a list. */
+.product-photo { border-radius: var(--radius-sm); object-fit: cover; flex-shrink: 0; background: var(--color-bg); }
 
 .task-card, .category-tile, .list-row, .branch-card, .history-card {
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);

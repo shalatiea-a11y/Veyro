@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Restaurant Ops — Sign in</title>
+<title>Veyro — Sign in</title>
 <meta name="theme-color" content="#12141d">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
@@ -12,7 +12,7 @@
 </head>
 <body>
 <div class="screen" style="padding-top:60px;max-width:360px">
-  <h1>Restaurant Ops</h1>
+  <div id="logoSlot" style="margin-bottom:22px"></div>
   <p class="muted">Sign in to your organization's account</p>
   <label style="font-size:13px;color:#6b7280;font-weight:600">Email</label>
   <input id="email" type="email" autocomplete="username"
@@ -29,6 +29,7 @@
 <script src="auth.js"></script>
 <script src="ui.js"></script>
 <script>
+  document.getElementById("logoSlot").innerHTML = veyroLogo(32);
   document.getElementById("signInBtn").addEventListener("click", async () => {
     const btn = document.getElementById("signInBtn");
     const email = document.getElementById("email").value.trim();

@@ -77,7 +77,7 @@ const SIDEBAR_VIEW_KEY = {
   review: "inventory", done: "inventory", delivery: "delivery", history: "history",
 };
 function paintSidebar(view) {
-  renderSidebar("Restaurant Ops", [
+  renderSidebar(veyroLogo(20, false), [
     { key: "home", label: "Home", icon: "home", onClick: () => go("home") },
     { key: "inventory", label: "Morning Inventory", icon: "inventory", onClick: () => go("categories") },
     { key: "delivery", label: "Delivery Receiving", icon: "delivery", onClick: () => go("delivery") },
@@ -128,68 +128,6 @@ async function loadHomeStatus(loc, { force = false } = {}) {
   const existing = await Store.todaysInventory(loc.id);
   homeStatusCache = { locationId: loc.id, existing };
   return existing;
-}
-
-// Consistent flat line-icon set for category tiles, keyed by category
-// name (case-insensitive substring match, since categories are free text
-// entered by an admin). No external icon font/CDN, no product photography
-// pipeline in this environment — these are the "visually consistent
-// illustration" fallback the design spec explicitly allows for when real
-// product photos aren't practical, so a category at least reads as
-// "bread" or "drinks" at a glance instead of a generic arrow. Falls back
-// to a plain box icon for any category name that doesn't match.
-const CATEGORY_ICONS = {
-  meat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><circle cx="12" cy="16" r="5"/></svg>`,
-  bread: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 5 0 0 1 16 0v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 12v2M12 11v3M16 12v2"/></svg>`,
-  drinks: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M7 9h10"/></svg>`,
-  frozen: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M4.5 6.5l15 11M19.5 6.5l-15 11"/></svg>`,
-  cheese: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l9-11 9 11z"/><circle cx="12" cy="15" r=".6" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r=".6" fill="currentColor" stroke="none"/></svg>`,
-  vegetable: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c-4-1-7-4-7-9a5 5 0 0 1 9-3 5 5 0 0 1 5 9c-1 2-4 3-7 3z"/><path d="M12 9V4"/></svg>`,
-  sauce: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 6 5 9a5 5 0 0 1-10 0c0-3 2-6 5-9z"/></svg>`,
-};
-const DEFAULT_CATEGORY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/></svg>`;
-
-function categoryIcon(categoryName) {
-  const key = String(categoryName || "").toLowerCase();
-  const match = Object.keys(CATEGORY_ICONS).find((k) => key.includes(k));
-  return `<span class="cat-icon">${match ? CATEGORY_ICONS[match] : DEFAULT_CATEGORY_ICON}</span>`;
-}
-
-// Per-product visual identity — NOT real product photography (no image
-// hosting/licensing pipeline available in this environment; see the
-// final report). Each of the 17 catalog products gets a distinct
-// color/shape combination so it's at least visually distinguishable at
-// a glance, including the three Monster variants, which must never look
-// identical to each other. This is an honest, disclosed simplification:
-// a real product image system (section 17) would use actual photography
-// or bespoke illustrations, not tinted line icons.
-const PRODUCT_VISUAL = {
-  "monster energy": { shape: "drinks", color: "#16a34a" },
-  "monster ultra": { shape: "drinks", color: "#64748b" },
-  "monster mango": { shape: "drinks", color: "#f97316" },
-  "bacon": { shape: "meat", color: "#b91c1c" },
-  "stora kött": { shape: "meat", color: "#dc2626" },
-  "small kött": { shape: "meat", color: "#ef4444" },
-  "kycklingburgare crispy": { shape: "meat", color: "#d97706" },
-  "vegoburgare crispy nochick o": { shape: "meat", color: "#65a30d" },
-  "stora bröd": { shape: "bread", color: "#b45309" },
-  "small bröd": { shape: "bread", color: "#c2833f" },
-  "potatis bröd": { shape: "bread", color: "#a16207" },
-  "glutenfri": { shape: "bread", color: "#92400e" },
-  "pommes": { shape: "frozen", color: "#eab308" },
-  "nuggets": { shape: "frozen", color: "#f59e0b" },
-  "chili cheese": { shape: "cheese", color: "#dc2626" },
-  "ost cheddar": { shape: "cheese", color: "#f59e0b" },
-  "grillost": { shape: "cheese", color: "#ca8a04" },
-};
-
-function productIcon(productName, size) {
-  const key = String(productName || "").toLowerCase();
-  const visual = PRODUCT_VISUAL[key];
-  const shape = CATEGORY_ICONS[visual?.shape] || DEFAULT_CATEGORY_ICON;
-  const color = visual?.color || "#2563eb";
-  const dim = size || 40;
-  return `<span class="cat-icon" style="width:${dim}px;height:${dim}px;color:${color};background:${color}1a">${shape}</span>`;
 }
 
 const views = {
@@ -280,7 +218,7 @@ const views = {
           const unitLabel = isGeneric ? (p.base_unit_label || p.base_unit) : "pcs";
           return `
             <button class="list-row" onclick="go('productEntry','${p.id}')">
-              <span>${p.name}</span>
+              <span style="display:flex;align-items:center;gap:10px">${productIcon(p, 32)}${p.name}</span>
               <span class="row-right">${total !== null ? `${formatQty(total)} ${unitLabel} ✓` : "Enter →"}</span>
             </button>
           `;
@@ -592,7 +530,7 @@ function renderOcrReview() {
         ${deliveryPhoto ? `<button class="ghost" style="margin-top:0" onclick="openInvoiceViewer()">${uiIcon("document", 16)} View original invoice</button>` : ""}
 
         <div class="generic-entry-card" style="text-align:center">
-          ${line.product ? productIcon(line.product.name, 64) : `<span class="cat-icon" style="width:64px;height:64px;background:var(--color-error-bg);color:var(--color-error)">${uiIcon("alert", 32)}</span>`}
+          ${line.product ? productIcon(line.product, 64) : `<span class="cat-icon" style="width:64px;height:64px;background:var(--color-error-bg);color:var(--color-error)">${uiIcon("alert", 32)}</span>`}
           <h2 style="margin:12px 0 4px">${line.product ? line.product.name : "Needs review"}</h2>
           <p class="muted" style="margin:0">Invoice line: "${line.text}"</p>
 

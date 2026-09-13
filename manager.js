@@ -19,7 +19,7 @@ function paintSidebar() {
   if (PROFILE?.role === "admin") {
     links.push({ key: "admin", label: "Admin", icon: "admin", onClick: () => { window.location.href = "admin.html"; } });
   }
-  renderSidebar("Restaurant Ops", links, "dashboard");
+  renderSidebar(veyroLogo(20, false), links, "dashboard");
 }
 
 async function goDashboard() {
