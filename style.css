@@ -31,11 +31,14 @@
   --radius-lg: 14px;
   --radius-pill: 999px;
 
-  --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
-  --shadow-md: 0 4px 16px rgba(0,0,0,.08);
+  --shadow-sm: 0 1px 2px rgba(16,20,35,.06), 0 1px 1px rgba(16,20,35,.04);
+  --shadow-md: 0 6px 20px rgba(16,20,35,.10), 0 2px 6px rgba(16,20,35,.05);
+  --shadow-lg: 0 16px 40px rgba(16,20,35,.16), 0 4px 12px rgba(16,20,35,.08);
+  --shadow-focus: 0 0 0 4px rgba(37,99,235,.16);
 
-  --transition-fast: 100ms ease;
-  --transition-base: 130ms ease;
+  --transition-fast: 100ms cubic-bezier(.2,.7,.3,1);
+  --transition-base: 150ms cubic-bezier(.2,.7,.3,1);
+  --ease-standard: cubic-bezier(.2,.7,.3,1);
 
   --sidebar-width: 240px;
 }
@@ -46,11 +49,22 @@ html, body {
   height: 100%;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   background: var(--color-bg);
+  background-image: radial-gradient(circle at 15% 0%, rgba(37,99,235,.04), transparent 45%);
+  background-attachment: fixed;
   color: var(--color-text);
+}
+@media (min-width: 1024px) {
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: rgba(16,20,35,.18); border-radius: 999px; border: 2px solid var(--color-bg); }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(16,20,35,.3); }
+  ::-webkit-scrollbar-track { background: transparent; }
 }
 button { font-family: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
   outline: 2px solid var(--color-brand); outline-offset: 2px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
+  transition: box-shadow var(--transition-fast);
 }
 
 .topbar {
@@ -141,14 +155,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   display: flex; justify-content: space-between; align-items: center;
   background: #eef2ff; border-radius: 12px; padding: 16px; font-size: 15px; margin-top: 6px;
 }
-.total-val { font-size: 20px; font-weight: 700; color: #2563eb; }
+.total-val { font-size: 20px; font-weight: 700; color: #2563eb; display: inline-block; }
 
 .primary {
-  width: 100%; padding: 16px; background: #2563eb; color: #fff; border: none;
+  width: 100%; padding: 16px; background: linear-gradient(180deg, #3b74f0, #2563eb); color: #fff; border: none;
   border-radius: 14px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 20px;
+  box-shadow: var(--shadow-sm);
 }
-.primary:disabled { background: #cbd5e1; }
-.sticky { position: sticky; bottom: 16px; box-shadow: 0 6px 20px rgba(37,99,235,0.3); }
+.primary:disabled { background: #cbd5e1; box-shadow: none; }
+.sticky { position: sticky; bottom: 16px; box-shadow: 0 10px 28px rgba(37,99,235,0.32); }
+@media (hover: hover) {
+  .primary:not(:disabled):hover { filter: brightness(1.06); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .secondary:hover, .ghost:hover { background: var(--color-bg); }
+  .destructive:hover { filter: brightness(0.97); }
+}
 
 .review-row {
   display: flex; justify-content: space-between; background: #fff; border: 1px solid #e5e7eb;
@@ -172,17 +192,33 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   display: flex; justify-content: space-between; align-items: center;
 }
 .branch-name { font-weight: 600; }
-.badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; animation: badge-in 220ms var(--ease-standard); }
 .badge.green { background: #dcfce7; color: #15803d; }
 .badge.red { background: #fee2e2; color: #b91c1c; }
+@keyframes badge-in { from { opacity: 0; transform: scale(.85); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .badge { animation: none; } }
 
 /* Button system: primary already existed; secondary/ghost/destructive
    are new, consistent variants (same radius/padding/typography scale as
    .primary) instead of every screen inventing its own one-off style. */
 .primary, .secondary, .ghost, .destructive {
-  transition: background-color var(--transition-fast), opacity var(--transition-fast), transform var(--transition-fast);
+  transition: background-color var(--transition-fast), opacity var(--transition-fast),
+    transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
 }
-.primary:active, .secondary:active, .ghost:active, .destructive:active { transform: scale(0.98); }
+.primary:active, .secondary:active, .ghost:active, .destructive:active { transform: scale(0.97); }
+
+/* Brief scale+glow flash the moment an action lands successfully
+   (withBusyButton in ui.js toggles this class on for ~500ms) — replaces
+   a static text swap with a small confirmation the tap actually worked. */
+.btn-success-pop { animation: btn-success-pop 480ms var(--ease-standard); }
+@keyframes btn-success-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.035); box-shadow: 0 0 0 6px rgba(34,197,94,.18); }
+  100% { transform: scale(1); box-shadow: var(--shadow-sm); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn-success-pop { animation: none; }
+}
 .secondary {
   width: 100%; padding: 16px; background: var(--color-surface); color: var(--color-text);
   border: 1px solid var(--color-border); border-radius: var(--radius-lg);
@@ -202,8 +238,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
    loading screens; this is the polish layer on top of that, not a
    replacement for it. Short and cheap: opacity + a few px of translate,
    well under the 150-250ms guidance. */
-.screen { animation: screen-in var(--transition-base) ease-out; }
-@keyframes screen-in { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.screen { animation: screen-in var(--transition-base) var(--ease-standard); }
+@keyframes screen-in { from { opacity: 0; transform: translateY(6px) scale(.995); } to { opacity: 1; transform: none; } }
+
+/* Toggled briefly by JS whenever a displayed total changes (e.g. typing
+   a quantity) — a quick scale pulse instead of the number just snapping,
+   so a live-updating total reads as "responding to you" rather than
+   static text someone forgot to wire up. */
+.val-pulse { animation: val-pulse 260ms var(--ease-standard); }
+@keyframes val-pulse { 0% { transform: scale(1.08); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .val-pulse { animation: none; } }
 @media (prefers-reduced-motion: reduce) {
   .screen { animation: none; }
 }
@@ -238,11 +282,17 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
    reflows a list. */
 .product-photo { border-radius: var(--radius-sm); object-fit: cover; flex-shrink: 0; background: var(--color-bg); }
 
-.task-card, .category-tile, .list-row, .branch-card, .history-card {
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+.task-card, .category-tile, .list-row, .branch-card, .history-card, .status-chip {
+  transition: transform var(--transition-fast) var(--ease-standard), box-shadow var(--transition-fast) var(--ease-standard), border-color var(--transition-fast);
+  box-shadow: var(--shadow-sm);
 }
 .task-card:active, .category-tile:active, .list-row:active, .branch-card:active {
-  transform: scale(0.98);
+  transform: scale(0.98); box-shadow: none;
+}
+@media (hover: hover) {
+  .task-card:hover, .category-tile:hover, .list-row:hover, .branch-card:hover {
+    box-shadow: var(--shadow-md); transform: translateY(-1px); border-color: #d7dbe3;
+  }
 }
 
 /* Category/product visual identity. Real product photography isn't
@@ -255,8 +305,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   width: 40px; height: 40px; border-radius: var(--radius-sm); flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   background: var(--color-info-bg);
+  transition: transform var(--transition-fast) var(--ease-standard);
 }
 .cat-icon svg { width: 24px; height: 24px; }
+@media (hover: hover) {
+  .category-tile:hover .cat-icon, .list-row:hover .cat-icon { transform: scale(1.08) rotate(-2deg); }
+}
 .category-tile { display: flex; flex-direction: column; gap: var(--space-2); }
 .category-tile .cat-icon { width: 36px; height: 36px; margin-bottom: var(--space-1); }
 
@@ -296,13 +350,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   }
   .sidebar-brand { font-weight: 700; font-size: 16px; padding: 0 var(--space-3) var(--space-5); }
   .sidebar-link {
+    position: relative;
     display: flex; align-items: center; gap: var(--space-3); padding: 10px var(--space-3);
     border-radius: var(--radius-sm); color: rgba(255,255,255,.75); text-decoration: none;
     font-size: 14px; font-weight: 500; cursor: pointer; border: none; background: none;
     width: 100%; text-align: left; transition: background-color var(--transition-fast), color var(--transition-fast);
   }
+  .sidebar-link::before {
+    content: ""; position: absolute; left: 0; top: 20%; bottom: 20%; width: 3px;
+    border-radius: 0 3px 3px 0; background: var(--color-brand);
+    transform: scaleY(0); transition: transform var(--transition-base) var(--ease-standard);
+  }
   .sidebar-link:hover { background: rgba(255,255,255,.08); color: #fff; }
   .sidebar-link.active { background: rgba(255,255,255,.14); color: #fff; }
+  .sidebar-link.active::before { transform: scaleY(1); }
   .sidebar-link svg { width: 18px; height: 18px; flex-shrink: 0; }
   .sidebar-spacer { flex: 1; }
 

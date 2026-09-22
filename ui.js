@@ -165,6 +165,18 @@ function runAsyncView(container, { load, render }) {
     });
 }
 
+// Retriggers the .val-pulse CSS animation on an element every time a
+// displayed total changes — forcing reflow so the class can be removed
+// and re-added on rapid successive calls (typing quickly) instead of the
+// animation only firing once.
+function pulseVal(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove("val-pulse");
+  void el.offsetWidth;
+  el.classList.add("val-pulse");
+}
+
 function withBusyButton(button, fn, { busyText = "Saving…", doneText = "Saved ✓" } = {}) {
   if (!button || button.disabled) return Promise.resolve();
   const original = button.textContent;
@@ -174,9 +186,16 @@ function withBusyButton(button, fn, { busyText = "Saving…", doneText = "Saved 
     .then(fn)
     .then((result) => {
       button.textContent = doneText;
+      // Small delight, not a notification: a brief scale+glow on the
+      // button itself, plus a short haptic tick where supported (mobile
+      // Chrome/Android) — both feature-detected/no-ops everywhere else,
+      // so this is safe to fire on every successful action app-wide.
+      button.classList.add("btn-success-pop");
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
       setTimeout(() => {
         button.disabled = false;
         button.textContent = original;
+        button.classList.remove("btn-success-pop");
       }, 900);
       return result;
     })

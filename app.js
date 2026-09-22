@@ -337,6 +337,7 @@ const views = {
 
     function updateTotal() {
       document.getElementById("totalVal").textContent = total() + " pieces";
+      pulseVal("totalVal");
     }
   },
 
@@ -824,6 +825,7 @@ function renderGenericProductEntry(p) {
     if (value === "") delete e.breakdown[key];
     else e.breakdown[key] = value;
     document.getElementById("totalVal").textContent = `${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}`;
+    pulseVal("totalVal");
     document.getElementById("equivLine").textContent = equivalentLine();
   };
 }
@@ -903,6 +905,7 @@ function renderWasteEntry(p) {
     if (value === "") delete breakdown[key];
     else breakdown[key] = value;
     document.getElementById("totalVal").textContent = `${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}`;
+    pulseVal("totalVal");
     document.getElementById("equivLine").textContent = equivalentLine();
   };
   window.updateWasteReason = (value) => { reason = value; };
