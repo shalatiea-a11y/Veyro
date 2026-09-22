@@ -400,6 +400,39 @@ const Store = (() => {
     return data;
   }
 
+  // --- Waste tracking ---
+  // One immediate write per logged item (not staged/batched like Morning
+  // Inventory) — submit_waste() does the server-side org/location/role
+  // checks and the same generic unit conversion every other entry screen
+  // uses, so this is never a second source of truth for the math.
+  async function submitWaste({ locationId, productId, breakdown, reason }) {
+    const { data, error } = await supabaseClient.rpc("submit_waste", {
+      p_location_id: locationId, p_product_id: productId, p_breakdown: breakdown, p_reason: reason || null,
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async function getTodaysWaste(locationId) {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabaseClient
+      .from("waste_entries")
+      .select("id, product_id, normalized_quantity, reason, recorded_at, products(name, base_unit, base_unit_label)")
+      .eq("location_id", locationId)
+      .gte("recorded_at", `${today}T00:00:00`)
+      .order("recorded_at", { ascending: false });
+    if (error) throw error;
+    return data.map((w) => ({
+      id: w.id,
+      productId: w.product_id,
+      productName: w.products?.name || "Unknown product",
+      quantity: w.normalized_quantity,
+      unitLabel: w.products?.base_unit_label || w.products?.base_unit || "",
+      reason: w.reason,
+      recordedAt: w.recorded_at,
+    }));
+  }
+
   async function getInventoryCorrections(itemId) {
     const { data, error } = await supabaseClient
       .from("inventory_item_corrections")
@@ -576,6 +609,8 @@ const Store = (() => {
     redeemInvite,
     correctInventoryItem,
     getInventoryCorrections,
+    submitWaste,
+    getTodaysWaste,
     getAllSuppliers,
     createSupplier,
     setSupplierActive,

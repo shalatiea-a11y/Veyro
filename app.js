@@ -75,12 +75,14 @@ function currentLocation() {
 const SIDEBAR_VIEW_KEY = {
   home: "home", categories: "inventory", productList: "inventory", productEntry: "inventory",
   review: "inventory", done: "inventory", delivery: "delivery", history: "history",
+  wasteCategories: "waste", wasteProductList: "waste", wasteEntry: "waste",
 };
 function paintSidebar(view) {
   renderSidebar(veyroLogo(20, false), [
     { key: "home", label: "Home", icon: "home", onClick: () => go("home") },
     { key: "inventory", label: "Morning Inventory", icon: "inventory", onClick: () => go("categories") },
     { key: "delivery", label: "Delivery Receiving", icon: "delivery", onClick: () => go("delivery") },
+    { key: "waste", label: "Waste", icon: "trash", onClick: () => go("wasteCategories") },
     { key: "history", label: "History", icon: "history", onClick: () => go("history") },
   ], SIDEBAR_VIEW_KEY[view] || "home");
 }
@@ -136,7 +138,7 @@ const views = {
     const isFresh = !force && homeStatusCache.locationId === loc.id;
     const renderHome = (existing) => render(`
       <div class="topbar">
-        <div class="brand">Restaurant Ops</div>
+        <div class="brand">${veyroLogo(20, false)}</div>
         <button class="pill" onclick="go('locationPicker')">${loc.name} ▾</button>
         <button class="pill" onclick="Auth.signOut()" style="margin-left:6px">Sign out</button>
       </div>
@@ -153,6 +155,11 @@ const views = {
             <span class="dot blue"></span>
             <span class="task-label">Delivery Receiving</span>
             <span class="task-status">Record delivery</span>
+          </button>
+          <button class="task-card" onclick="go('wasteCategories')">
+            <span class="dot" style="background:#dc2626"></span>
+            <span class="task-label">Waste</span>
+            <span class="task-status">Log what was thrown away</span>
           </button>
           <button class="task-card" onclick="go('history')">
             <span class="dot blue"></span>
@@ -416,6 +423,57 @@ const views = {
       return;
     }
     renderDeliveryChoice();
+  },
+
+  async wasteCategories() {
+    render(`
+      <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Waste</div></div>
+      <div class="screen">
+        <p class="muted">What are you logging as waste?</p>
+        <div class="grid">
+          ${CATEGORIES.map((c) => `
+            <button class="category-tile" onclick="go('wasteProductList','${c}')">
+              ${categoryIcon(c)}
+              <div class="cat-name">${c}</div>
+            </button>
+          `).join("")}
+        </div>
+      </div>
+    `);
+  },
+
+  async wasteProductList(category) {
+    const loc = currentLocation();
+    const products = PRODUCTS.filter((p) => p.category === category);
+    await runAsyncView(app, {
+      load: () => Store.getTodaysWaste(loc.id),
+      render: (todaysWaste) => {
+        const loggedByProduct = {};
+        todaysWaste.forEach((w) => {
+          loggedByProduct[w.productId] = (loggedByProduct[w.productId] || 0) + Number(w.quantity);
+        });
+        render(`
+          <div class="topbar"><button class="back" onclick="go('wasteCategories')">←</button><div class="brand">${category}</div></div>
+          <div class="screen">
+            ${products.map((p) => {
+              const logged = loggedByProduct[p.id];
+              const unitLabel = p.base_unit_label || p.base_unit || "pcs";
+              return `
+                <button class="list-row" onclick="go('wasteEntry','${p.id}')">
+                  <span style="display:flex;align-items:center;gap:10px">${productIcon(p, 32)}${p.name}</span>
+                  <span class="row-right">${logged ? `${formatQty(logged)} ${unitLabel} today` : "Log waste →"}</span>
+                </button>
+              `;
+            }).join("")}
+          </div>
+        `);
+      },
+    });
+  },
+
+  async wasteEntry(productId) {
+    const p = PRODUCTS.find((x) => x.id === productId);
+    renderWasteEntry(p);
   },
 };
 
@@ -770,6 +828,113 @@ function renderGenericProductEntry(p) {
   };
 }
 
+const WASTE_REASONS = ["Spoiled / expired", "Dropped / damaged", "Prep error", "Customer return", "Other"];
+
+// A single immediate log, not a staged multi-item session like Morning
+// Inventory — an employee throwing something away wants one tap, not a
+// review screen. Reuses the exact same breakdown UI and unit-conversion
+// engine as renderGenericProductEntry() (packaging.js), so "how many
+// pieces in a bag" is never answered twice in this codebase.
+function renderWasteEntry(p) {
+  const breakdown = {};
+  let reason = "";
+
+  const fields = [
+    ...p.packages.map((t) => ({ key: t.name, label: t.name })),
+    { key: p.base_unit, label: p.base_unit_label || p.base_unit },
+  ];
+
+  function currentTotal() {
+    try { return normalizeBreakdown(p, breakdown); }
+    catch (e) { return 0; }
+  }
+
+  function equivalentLine() {
+    const total = currentTotal();
+    if (total <= 0) return "";
+    try {
+      const parts = decompose(p, total).filter((part) => part.count > 0);
+      return formatBreakdown(parts.length ? parts : [{ name: p.base_unit_label || p.base_unit, count: total }]);
+    } catch (e) {
+      return `${total} ${p.base_unit_label || p.base_unit}`;
+    }
+  }
+
+  render(`
+    <div class="topbar"><button class="back" onclick="go('wasteProductList','${p.category}')">←</button><div class="brand">Log waste</div></div>
+    <div class="screen">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        ${productIcon(p, 48)}
+        <div>
+          <h2 style="margin:0">${p.name}</h2>
+          <p class="muted" style="margin:2px 0 0">${p.packages.map((t) => `1 ${t.name} = ${formatQty(t.contains)} ${t.unit}`).join(" · ") || `Tracked in ${p.base_unit_label || p.base_unit}`}</p>
+        </div>
+      </div>
+      <div class="generic-entry-card">
+        ${fields.map((f) => `
+          <div class="stepper-row">
+            <label>${capitalize(f.label)}</label>
+            <input type="number" inputmode="decimal" min="0" step="any" id="qty-${f.key}"
+              value="" placeholder="0"
+              style="width:110px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;font-size:16px;text-align:right"
+              oninput="updateWasteField('${f.key}', this.value)">
+          </div>
+        `).join("")}
+      </div>
+      <div class="total-card">
+        <span>Total wasted</span>
+        <span id="totalVal" class="total-val">${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}</span>
+      </div>
+      <p class="muted" id="equivLine" style="text-align:right">${equivalentLine()}</p>
+
+      <label style="font-size:13px;color:#6b7280;font-weight:600;margin-top:14px;display:block">Reason</label>
+      <select id="wasteReason" onchange="updateWasteReason(this.value)"
+        style="width:100%;padding:12px;margin:6px 0 14px;border:1px solid #e5e7eb;border-radius:10px;font-size:15px">
+        <option value="" disabled selected>Select a reason</option>
+        ${WASTE_REASONS.map((r) => `<option value="${r}">${r}</option>`).join("")}
+      </select>
+
+      <p id="wasteError" class="muted" style="color:#b91c1c;display:none"></p>
+      <button class="primary sticky" id="wasteSubmitBtn" onclick="submitWasteEntry('${p.id}')">Log waste</button>
+    </div>
+  `);
+
+  window.updateWasteField = (key, value) => {
+    if (value === "") delete breakdown[key];
+    else breakdown[key] = value;
+    document.getElementById("totalVal").textContent = `${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}`;
+    document.getElementById("equivLine").textContent = equivalentLine();
+  };
+  window.updateWasteReason = (value) => { reason = value; };
+
+  window.submitWasteEntry = async (productId) => {
+    const errorEl = document.getElementById("wasteError");
+    errorEl.style.display = "none";
+    const total = currentTotal();
+    if (total <= 0) {
+      errorEl.textContent = "Enter a quantity greater than zero.";
+      errorEl.style.display = "block";
+      return;
+    }
+    if (!reason) {
+      errorEl.textContent = "Select a reason.";
+      errorEl.style.display = "block";
+      return;
+    }
+    const loc = currentLocation();
+    const btn = document.getElementById("wasteSubmitBtn");
+    try {
+      await withBusyButton(btn, () => Store.submitWaste({
+        locationId: loc.id, productId, breakdown, reason,
+      }), { busyText: "Logging…", doneText: "Logged ✓" });
+      go("wasteProductList", p.category);
+    } catch (err) {
+      errorEl.textContent = err.message || String(err);
+      errorEl.style.display = "block";
+    }
+  };
+}
+
 function formatQty(n) {
   const r = Math.round((Number(n) || 0) * 1000) / 1000;
   return r % 1 === 0 ? String(r) : String(r);
@@ -1060,7 +1225,7 @@ function resetSession() { session = { entries: {} }; }
 // flight. The location switcher and rest of the real Home screen replace
 // this once LOCATIONS has actually loaded.
 function renderShell() {
-  render(`<div class="topbar"><div class="brand">Restaurant Ops</div></div>`);
+  render(`<div class="topbar"><div class="brand">${veyroLogo(20, false)}</div></div>`);
 }
 
 async function boot() {

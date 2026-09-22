@@ -1101,6 +1101,11 @@ $$;
 -- for anything already working.
 -- =======================================================================
 
+-- A. Unique product names per org. Confirmed zero duplicates via a
+-- read-only check before adding this (see README) — never applied blind.
+alter table products drop constraint if exists products_org_name_unique;
+alter table products add constraint products_org_name_unique unique (organization_id, name);
+
 -- C. Missing indexes (read performance only, no behavior change).
 create index if not exists inventory_items_product_idx on inventory_items (product_id);
 create index if not exists delivery_items_product_idx on delivery_items (product_id);
@@ -1206,6 +1211,92 @@ $$;
 alter table deliveries drop constraint if exists deliveries_extraction_source_check;
 alter table deliveries add constraint deliveries_extraction_source_check
   check (extraction_source in ('manual', 'mock_ocr', 'real_ocr'));
+
+-- =======================================================================
+-- Waste tracking. An employee logs a quantity thrown away for any
+-- product, in whatever unit the product's own package config already
+-- uses (same generic conversion engine as Morning Inventory and
+-- Delivery Receiving — no separate waste-specific math). Reuses
+-- resolve_generic_inventory_quantity() as the single source of truth for
+-- unit math, and mirrors submit_daily_inventory()'s security model
+-- exactly (org/location/assignment checks, SECURITY INVOKER).
+-- =======================================================================
+create table if not exists waste_entries (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id),
+  location_id uuid not null references locations(id),
+  product_id uuid not null references products(id),
+  breakdown jsonb not null,
+  normalized_quantity numeric not null check (normalized_quantity >= 0),
+  reason text,
+  recorded_by uuid not null references profiles(id),
+  recorded_at timestamptz not null default now()
+);
+
+create index if not exists waste_entries_product_idx on waste_entries (product_id);
+create index if not exists waste_entries_org_location_idx on waste_entries (organization_id, location_id);
+
+alter table waste_entries enable row level security;
+
+create policy "waste entries read scoped to role" on waste_entries
+  for select using (
+    organization_id = current_org_id()
+    and (
+      current_role_name() in ('admin', 'manager')
+      or location_id in (select location_id from employee_locations where profile_id = auth.uid())
+    )
+  );
+
+create policy "waste entries insert in own org" on waste_entries
+  for insert with check (organization_id = current_org_id());
+
+create policy "waste entries admin delete" on waste_entries
+  for delete using (
+    organization_id = current_org_id()
+    and current_role_name() = 'admin'
+  );
+
+create or replace function submit_waste(
+  p_location_id uuid,
+  p_product_id uuid,
+  p_breakdown jsonb,
+  p_reason text default null
+) returns uuid
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_org_id uuid := current_org_id();
+  v_normalized numeric;
+  v_waste_id uuid;
+begin
+  if v_org_id is null then
+    raise exception 'No organization linked to this account';
+  end if;
+
+  if not exists (select 1 from locations where id = p_location_id and organization_id = v_org_id) then
+    raise exception 'Location does not belong to your organization';
+  end if;
+
+  if not exists (select 1 from products where id = p_product_id and organization_id = v_org_id) then
+    raise exception 'Product does not belong to your organization';
+  end if;
+
+  if current_role_name() = 'employee'
+     and not exists (select 1 from employee_locations where profile_id = auth.uid() and location_id = p_location_id) then
+    raise exception 'You are not assigned to this location';
+  end if;
+
+  v_normalized := (resolve_generic_inventory_quantity(p_product_id, p_breakdown)->>'normalized_quantity')::numeric;
+
+  insert into waste_entries (organization_id, location_id, product_id, breakdown, normalized_quantity, reason, recorded_by)
+  values (v_org_id, p_location_id, p_product_id, p_breakdown, v_normalized, nullif(trim(p_reason), ''), auth.uid())
+  returning id into v_waste_id;
+
+  return v_waste_id;
+end;
+$$;
 
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards

@@ -14,10 +14,10 @@
 -- its config updated and its package tiers replaced, not duplicated.
 --
 -- Unknown values were deliberately left unset rather than guessed:
---   - Nuggets: pieces-per-bag is NOT configured (only bag = 1 kg is
---     known) — open_piece_notes lets an employee jot an approximate
---     count without the system inventing a conversion.
---   - Chili cheese: same — kg only, no piece conversion.
+--   - Nuggets: each piece weighs 22g and a bag is 1 kg (confirmed), so
+--     bag -> piece -> kg is a real, exact conversion chain, not a note.
+--   - Chili cheese: a bag is 48 pieces (confirmed) — tracked by piece
+--     count, not weight.
 --   - Ost cheddar's package/block/slice hierarchy IS fully specified
 --     (4 blocks x 22 slices = 88 slices, 1 kg total), so it's configured.
 
@@ -56,8 +56,8 @@ begin
     ('Potatis bröd',                  'Bread',  'piece', 'bun',   null, null, null, false),
     ('Glutenfri',                     'Bread',  'piece', 'bun',   null, null, null, false),
     ('Pommes',                        'Frozen', 'kg',    null,    null, null, null, false),
-    ('Nuggets',                       'Frozen', 'kg',    null,    null, null, null, true),
-    ('Chili cheese',                  'Frozen', 'kg',    null,    null, null, null, true),
+    ('Nuggets',                       'Frozen', 'kg',    null,    null, null, null, false),
+    ('Chili cheese',                  'Frozen', 'piece', 'piece', null, null, null, false),
     ('Ost cheddar',                   'Cheese', 'piece', 'slice', null, null, 1,    false),
     ('Grillost',                      'Cheese', 'piece', null,    null, null, null, false);
 
@@ -75,12 +75,13 @@ begin
     ('Glutenfri',                    1, 'bag',    4,   'piece'),
     ('Pommes',                       1, 'carton', 5,   'bag'),
     ('Pommes',                       2, 'bag',    2.5, 'kg'),
-    ('Nuggets',                      1, 'bag',    1,   'kg'),
+    ('Nuggets',                      1, 'bag',    1000.0/22.0, 'piece'),
+    ('Nuggets',                      2, 'piece',  0.022, 'kg'),
+    ('Chili cheese',                 1, 'bag',    48,  'piece'),
     ('Ost cheddar',                  1, 'package',4,   'block'),
     ('Ost cheddar',                  2, 'block',  22,  'piece'),
     ('Grillost',                     1, 'box',    16,  'piece');
-    -- Bacon and Chili cheese intentionally have NO tiers: base_unit (kg)
-    -- is entered directly, exactly as specified.
+    -- Bacon intentionally has NO tiers: base_unit (kg) is entered directly.
 
   -- Insert only the products that don't already exist by name in this org.
   insert into products (organization_id, name, category, package_unit, units_per_package, base_unit, base_unit_label, unit_weight_g, unit_volume_ml, net_weight_kg, open_piece_notes)
