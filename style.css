@@ -241,13 +241,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .screen { animation: screen-in var(--transition-base) var(--ease-standard); }
 @keyframes screen-in { from { opacity: 0; transform: translateY(6px) scale(.995); } to { opacity: 1; transform: none; } }
 
-/* Toggled briefly by JS whenever a displayed total changes (e.g. typing
-   a quantity) — a quick scale pulse instead of the number just snapping,
-   so a live-updating total reads as "responding to you" rather than
-   static text someone forgot to wire up. */
-.val-pulse { animation: val-pulse 260ms var(--ease-standard); }
-@keyframes val-pulse { 0% { transform: scale(1.08); } 100% { transform: scale(1); } }
-@media (prefers-reduced-motion: reduce) { .val-pulse { animation: none; } }
 @media (prefers-reduced-motion: reduce) {
   .screen { animation: none; }
 }

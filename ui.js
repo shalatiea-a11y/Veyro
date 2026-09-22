@@ -178,18 +178,6 @@ function runAsyncView(container, { load, render }) {
     });
 }
 
-// Retriggers the .val-pulse CSS animation on an element every time a
-// displayed total changes — forcing reflow so the class can be removed
-// and re-added on rapid successive calls (typing quickly) instead of the
-// animation only firing once.
-function pulseVal(id) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.classList.remove("val-pulse");
-  void el.offsetWidth;
-  el.classList.add("val-pulse");
-}
-
 function withBusyButton(button, fn, { busyText = "Saving…", doneText = "Saved ✓" } = {}) {
   if (!button || button.disabled) return Promise.resolve();
   const original = button.textContent;

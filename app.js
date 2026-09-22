@@ -181,7 +181,7 @@ const views = {
 
   async locationPicker() {
     render(`
-      <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Select Location</div></div>
+      <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Select Location</div></div>
       <div class="screen">
         ${LOCATIONS.map((l) => `
           <button class="list-row" onclick="Store.setCurrentLocation('${l.id}'); go('home')">${l.name}</button>
@@ -192,7 +192,7 @@ const views = {
 
   async categories() {
     render(`
-      <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Morning Inventory</div></div>
+      <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Morning Inventory</div></div>
       <div class="screen">
         <p class="muted">Select category</p>
         <div class="grid">
@@ -216,7 +216,7 @@ const views = {
   async productList(category) {
     const products = PRODUCTS.filter((p) => p.category === category);
     render(`
-      <div class="topbar"><button class="back" onclick="go('categories')">←</button><div class="brand">${category}</div></div>
+      <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${category}</div></div>
       <div class="screen">
         ${products.map((p) => {
           const entry = session.entries[p.id];
@@ -252,7 +252,7 @@ const views = {
     const total = () => Store.normalizeQuantity(p, entry);
 
     render(`
-      <div class="topbar"><button class="back" onclick="go('productList','${p.category}')">←</button><div class="brand">${p.name}</div></div>
+      <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${p.name}</div></div>
       <div class="screen">
         <p class="muted">1 box = ${p.unitsPerBox} pieces</p>
         <div class="tabs">
@@ -337,7 +337,6 @@ const views = {
 
     function updateTotal() {
       document.getElementById("totalVal").textContent = total() + " pieces";
-      pulseVal("totalVal");
     }
   },
 
@@ -348,7 +347,7 @@ const views = {
       return { p, total: Store.normalizeQuantity(p, session.entries[pid]), unitLabel: isGeneric ? (p.base_unit_label || p.base_unit) : "pcs" };
     });
     render(`
-      <div class="topbar"><button class="back" onclick="go('categories')">←</button><div class="brand">Review</div></div>
+      <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Review</div></div>
       <div class="screen">
         ${rows.length === 0 ? `<p class="muted">No products entered yet.</p>` : rows.map((r) => `
           <div class="review-row"><span>${r.p.name}</span><span>${formatQty(r.total)} ${r.unitLabel}</span></div>
@@ -374,7 +373,7 @@ const views = {
     await runAsyncView(app, {
       load: () => Store.getInventories({ locationId: loc.id }),
       render: (records) => render(`
-        <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Previous Inventory</div></div>
+        <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Previous Inventory</div></div>
         <div class="screen">
           ${records.length === 0 ? `<p class="muted">No submissions yet.</p>` : records.map((r) => `
             <div class="history-card">
@@ -428,7 +427,7 @@ const views = {
 
   async wasteCategories() {
     render(`
-      <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Waste</div></div>
+      <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Waste</div></div>
       <div class="screen">
         <p class="muted">What are you logging as waste?</p>
         <div class="grid">
@@ -454,7 +453,7 @@ const views = {
           loggedByProduct[w.productId] = (loggedByProduct[w.productId] || 0) + Number(w.quantity);
         });
         render(`
-          <div class="topbar"><button class="back" onclick="go('wasteCategories')">←</button><div class="brand">${category}</div></div>
+          <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${category}</div></div>
           <div class="screen">
             ${products.map((p) => {
               const logged = loggedByProduct[p.id];
@@ -484,7 +483,7 @@ function renderDeliveryChoice() {
   deliveryPhotoScreen = "choice";
   const loc = deliveryCurrentLocation();
   render(`
-    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery Receiving</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Delivery Receiving</div></div>
     <div class="screen">
       <p class="muted">Location: <strong>${loc ? loc.name : "none"}</strong></p>
 
@@ -582,7 +581,7 @@ function renderOcrReview() {
   const discrepancy = line.receivedQuantity !== line.extractedQuantity;
 
   render(`
-    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery #${ocrIndex + 1}/${ocrLines.length}</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Delivery #${ocrIndex + 1}/${ocrLines.length}</div></div>
     <div class="screen delivery-review-layout">
       <div class="delivery-review-main">
         <p class="muted">Line ${ocrIndex + 1} of ${ocrLines.length} · from invoice</p>
@@ -673,7 +672,7 @@ function renderOcrComplete() {
   const skipped = ocrLines.length - resolvedLines.length;
   const discrepancies = resolvedLines.filter((l) => l.receivedQuantity !== l.extractedQuantity);
   render(`
-    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Review & Confirm</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Review & Confirm</div></div>
     <div class="screen">
       <div class="empty-state" style="padding:24px 0">
         <span class="cat-icon" style="width:56px;height:56px;background:var(--color-success-bg);color:var(--color-success-text);margin:0 auto var(--space-4)">${uiIcon("check", 28)}</span>
@@ -787,7 +786,7 @@ function renderGenericProductEntry(p) {
   }
 
   render(`
-    <div class="topbar"><button class="back" onclick="go('productList','${p.category}')">←</button><div class="brand">${p.name}</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${p.name}</div></div>
     <div class="screen">
       <p class="muted">${p.packages.map((t) => `1 ${t.name} = ${formatQty(t.contains)} ${t.unit}`).join(" · ") || `Tracked in ${p.base_unit_label || p.base_unit}`}</p>
       <div class="generic-entry-card">
@@ -825,7 +824,6 @@ function renderGenericProductEntry(p) {
     if (value === "") delete e.breakdown[key];
     else e.breakdown[key] = value;
     document.getElementById("totalVal").textContent = `${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}`;
-    pulseVal("totalVal");
     document.getElementById("equivLine").textContent = equivalentLine();
   };
 }
@@ -863,7 +861,7 @@ function renderWasteEntry(p) {
   }
 
   render(`
-    <div class="topbar"><button class="back" onclick="go('wasteProductList','${p.category}')">←</button><div class="brand">Log waste</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Log waste</div></div>
     <div class="screen">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
         ${productIcon(p, 48)}
@@ -905,7 +903,6 @@ function renderWasteEntry(p) {
     if (value === "") delete breakdown[key];
     else breakdown[key] = value;
     document.getElementById("totalVal").textContent = `${formatQty(currentTotal())} ${p.base_unit_label || p.base_unit}`;
-    pulseVal("totalVal");
     document.getElementById("equivLine").textContent = equivalentLine();
   };
   window.updateWasteReason = (value) => { reason = value; };
@@ -947,7 +944,7 @@ function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
 function renderEmptyState(brand, title, body, actionHtml) {
   render(`
-    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">${brand}</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${brand}</div></div>
     <div class="screen empty-state">
       <span class="cat-icon">${DEFAULT_CATEGORY_ICON}</span>
       <h2>${title}</h2>
@@ -1001,7 +998,7 @@ function renderDelivery() {
   deliveryPhotoScreen = "manual";
   const loc = deliveryCurrentLocation();
   render(`
-    <div class="topbar"><button class="back" onclick="go('home')">←</button><div class="brand">Delivery Receiving</div></div>
+    <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">Delivery Receiving</div></div>
     <div class="screen">
       <p class="muted">Location: <strong>${loc ? loc.name : "none"}</strong></p>
 
