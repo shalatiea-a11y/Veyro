@@ -294,7 +294,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   position: fixed; inset: 0; z-index: 100;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
   background: radial-gradient(circle at 28% 22%, #2a52c9 0%, #12141d 55%, #0a0b10 100%);
-  animation: splash-out 480ms var(--ease-standard) 680ms forwards;
+  animation: splash-out 650ms var(--ease-standard) 1500ms forwards;
 }
 .splash::before, .splash::after {
   content: ""; position: absolute; border-radius: 50%; filter: blur(60px); opacity: .4;
