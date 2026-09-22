@@ -1491,6 +1491,34 @@ begin
 end;
 $$;
 
+-- =======================================================================
+-- Weekly report scheduling. The "weekly-report" Edge Function
+-- (supabase/functions/weekly-report/) emails every admin/manager a
+-- summary — waste cost, deliveries, inventory completion, low stock —
+-- once a week. It's not user-triggered, so it's called by pg_cron via
+-- pg_net rather than through the normal client/RLS path; the function
+-- checks a shared secret header instead of a user JWT (verify_jwt=false
+-- at deploy time). See supabase/functions/weekly-report/README.md for
+-- the two secrets (RESEND_API_KEY, CRON_SECRET) that must be set before
+-- this actually sends anything — until then every run 401s harmlessly.
+-- =======================================================================
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- cron.schedule() re-running with the same job name updates that job in
+-- place rather than duplicating it, so this is safe to re-apply.
+select cron.schedule(
+  'veyro-weekly-report',
+  '30 6 * * 1', -- Mondays 06:30 UTC (~07:30/08:30 Swedish time)
+  $cron$
+  select net.http_post(
+    url := 'https://mmgdylbikusvjgczlrgy.supabase.co/functions/v1/weekly-report',
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', 'f2371e1a-27d1-4314-a50c-97146cb6af4e'),
+    body := '{}'::jsonb
+  );
+  $cron$
+);
+
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
 -- in Supabase Auth (see README), then insert their profiles below.

@@ -33,7 +33,8 @@ async function render() {
   app.innerHTML = `
     <div class="topbar">
       <div class="brand">Admin</div>
-      <button class="pill" onclick="Auth.signOut()" style="margin-left:auto">Sign out</button>
+      <button class="pill" onclick="exportWasteCsv()" style="margin-left:auto">Export waste (Excel/CSV)</button>
+      <button class="pill" onclick="Auth.signOut()">Sign out</button>
     </div>
     <div class="screen">
       <div class="tabs">
@@ -68,6 +69,34 @@ function paintSidebar() {
     { key: "team", label: "Team", icon: "team", onClick: () => { tab = "team"; render(); } },
     { key: "manager", label: "Manager Dashboard", icon: "dashboard", onClick: () => { window.location.href = "manager.html"; } },
   ], tab);
+}
+
+// Opens directly in Excel (comma-separated, no external library needed —
+// stays within this project's zero-runtime-dependencies rule). 90 days is
+// enough for a real accounting review without the export growing unbounded.
+async function exportWasteCsv() {
+  try {
+    const entries = await Store.getRecentWaste({ days: 90 });
+    const header = ["Date", "Product", "Quantity", "Unit", "Cost (kr)", "Reason"];
+    const rows = entries.map((w) => [
+      new Date(w.recordedAt).toISOString().slice(0, 10),
+      w.productName,
+      w.quantity,
+      w.unitLabel,
+      w.costSek != null ? w.costSek.toFixed(2) : "",
+      w.reason || "",
+    ]);
+    const csv = [header, ...rows]
+      .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\r\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `veyro-waste-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) { showError(err); }
 }
 
 let PRODUCTS_CACHE = [];
