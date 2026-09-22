@@ -112,6 +112,17 @@ async function renderProducts() {
           </div>
         </div>
         <div id="pkgEditor-${p.id}" style="display:none;margin-top:12px;border-top:1px solid #e5e7eb;padding-top:12px"></div>
+        <div style="display:flex;gap:16px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid #f1f1f1;flex-wrap:wrap">
+          <label style="font-size:13px;color:#6b7280">Cost (kr/${p.base_unit_label || p.base_unit})
+            <input type="number" min="0" step="0.01" id="cost-${p.id}" value="${p.cost_price ?? ""}" placeholder="auto from deliveries"
+              style="width:110px;padding:6px;margin-left:6px;border:1px solid #e5e7eb;border-radius:8px">
+          </label>
+          <label style="font-size:13px;color:#6b7280">Par level (${p.base_unit_label || p.base_unit})
+            <input type="number" min="0" step="any" id="par-${p.id}" value="${p.par_level ?? ""}" placeholder="none"
+              style="width:90px;padding:6px;margin-left:6px;border:1px solid #e5e7eb;border-radius:8px">
+          </label>
+          <button class="pill" id="costSaveBtn-${p.id}" onclick="saveProductCostAndPar('${p.id}')">Save</button>
+        </div>
       </div>
     `).join("")}
   `;
@@ -127,6 +138,16 @@ async function renderProducts() {
       await renderProducts();
     } catch (err) { showError(err); }
   });
+}
+
+async function saveProductCostAndPar(productId) {
+  const costPrice = document.getElementById(`cost-${productId}`).value;
+  const parLevel = document.getElementById(`par-${productId}`).value;
+  const btn = document.getElementById(`costSaveBtn-${productId}`);
+  try {
+    await withBusyButton(btn, () => Store.updateProductCostAndPar(productId, { costPrice, parLevel }), { busyText: "Saving…", doneText: "Saved ✓" });
+    await renderProducts();
+  } catch (err) { showError(err); }
 }
 
 async function uploadProductPhoto(productId, input) {

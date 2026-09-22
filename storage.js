@@ -280,6 +280,14 @@ const Store = (() => {
     return url;
   }
 
+  async function updateProductCostAndPar(productId, { costPrice, parLevel }) {
+    const { error } = await supabaseClient.from("products").update({
+      cost_price: costPrice === "" || costPrice == null ? null : Number(costPrice),
+      par_level: parLevel === "" || parLevel == null ? null : Number(parLevel),
+    }).eq("id", productId);
+    if (error) throw error;
+  }
+
   async function setProductActive(id, active) {
     const { error } = await supabaseClient.from("products").update({ active }).eq("id", id);
     if (error) throw error;
@@ -413,16 +421,9 @@ const Store = (() => {
     return data;
   }
 
-  async function getTodaysWaste(locationId) {
-    const today = new Date().toISOString().slice(0, 10);
-    const { data, error } = await supabaseClient
-      .from("waste_entries")
-      .select("id, product_id, normalized_quantity, reason, recorded_at, products(name, base_unit, base_unit_label)")
-      .eq("location_id", locationId)
-      .gte("recorded_at", `${today}T00:00:00`)
-      .order("recorded_at", { ascending: false });
-    if (error) throw error;
-    return data.map((w) => ({
+  function toWasteRecord(w) {
+    const cost = w.unit_cost_at_entry != null ? Number(w.unit_cost_at_entry) * Number(w.normalized_quantity) : null;
+    return {
       id: w.id,
       productId: w.product_id,
       productName: w.products?.name || "Unknown product",
@@ -430,7 +431,36 @@ const Store = (() => {
       unitLabel: w.products?.base_unit_label || w.products?.base_unit || "",
       reason: w.reason,
       recordedAt: w.recorded_at,
-    }));
+      costSek: cost,
+    };
+  }
+
+  const WASTE_SELECT = "id, product_id, normalized_quantity, reason, recorded_at, unit_cost_at_entry, products(name, base_unit, base_unit_label)";
+
+  async function getTodaysWaste(locationId) {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabaseClient
+      .from("waste_entries")
+      .select(WASTE_SELECT)
+      .eq("location_id", locationId)
+      .gte("recorded_at", `${today}T00:00:00`)
+      .order("recorded_at", { ascending: false });
+    if (error) throw error;
+    return data.map(toWasteRecord);
+  }
+
+  // Org-wide waste for the Manager dashboard's cost summary — bounded to
+  // the last `days` days (default 7) so it stays a cheap query as
+  // history grows, same reasoning as getInventories()'s limit.
+  async function getRecentWaste({ days = 7 } = {}) {
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabaseClient
+      .from("waste_entries")
+      .select(WASTE_SELECT)
+      .gte("recorded_at", since)
+      .order("recorded_at", { ascending: false });
+    if (error) throw error;
+    return data.map(toWasteRecord);
   }
 
   async function getInventoryCorrections(itemId) {
@@ -611,6 +641,8 @@ const Store = (() => {
     getInventoryCorrections,
     submitWaste,
     getTodaysWaste,
+    getRecentWaste,
+    updateProductCostAndPar,
     getAllSuppliers,
     createSupplier,
     setSupplierActive,

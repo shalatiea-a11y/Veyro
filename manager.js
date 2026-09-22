@@ -45,12 +45,15 @@ async function renderDashboard() {
       Store.getLocations(),
       Store.todaysInventories(),
       Store.getDeliveries(),
+      Store.getProducts(),
+      Store.getRecentWaste({ days: 7 }),
     ]),
-    render: ([locations, todaysRecords, deliveries]) => renderDashboardBody(locations, todaysRecords, deliveries),
+    render: ([locations, todaysRecords, deliveries, products, recentWaste]) =>
+      renderDashboardBody(locations, todaysRecords, deliveries, products, recentWaste),
   });
 }
 
-function renderDashboardBody(locations, todaysRecords, deliveries) {
+function renderDashboardBody(locations, todaysRecords, deliveries, products, recentWaste) {
   const rows = locations.map((loc) => ({
     loc,
     record: todaysRecords.find((r) => r.locationId === loc.id),
@@ -59,6 +62,31 @@ function renderDashboardBody(locations, todaysRecords, deliveries) {
   const missing = rows.filter((r) => !r.record);
   const today = new Date().toISOString().slice(0, 10);
   const deliveriesToday = deliveries.filter((d) => new Date(d.receivedAt).toISOString().slice(0, 10) === today);
+
+  // Below-par-level flags: only for products an admin has actually set a
+  // par_level on, and only from a location that HAS submitted today's
+  // count (no par_level or no fresh count today = no claim either way,
+  // never a guessed "probably low").
+  const productById = Object.fromEntries(products.map((p) => [p.id, p]));
+  const lowStock = [];
+  todaysRecords.forEach((r) => {
+    const loc = locations.find((l) => l.id === r.locationId);
+    r.items.forEach((it) => {
+      const p = productById[it.productId];
+      if (p?.par_level != null && Number(it.totalPieces) < Number(p.par_level)) {
+        lowStock.push({ locName: loc?.name || "?", productName: it.productName, have: it.totalPieces, par: p.par_level, unit: p.base_unit_label || p.base_unit });
+      }
+    });
+  });
+
+  // Waste cost: only entries with a known cost at the time they were
+  // logged count toward the total — never estimated after the fact.
+  const wasteWithCost = recentWaste.filter((w) => w.costSek != null);
+  const wasteTotalSek = wasteWithCost.reduce((sum, w) => sum + w.costSek, 0);
+  const wasteByProduct = {};
+  wasteWithCost.forEach((w) => { wasteByProduct[w.productName] = (wasteByProduct[w.productName] || 0) + w.costSek; });
+  const topWaste = Object.entries(wasteByProduct).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const wasteMissingCostCount = recentWaste.length - wasteWithCost.length;
 
   // Only real, currently-available signals go here — no invented
   // discrepancy/review counts, since that data doesn't exist yet (no AI
@@ -89,6 +117,28 @@ function renderDashboardBody(locations, todaysRecords, deliveries) {
           </button>
         `).join("")}
       ` : `<p class="muted" style="margin-top:20px;color:#15803d">✓ Nothing needs attention right now.</p>`}
+
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:20px">
+        <p class="muted" style="margin:0 0 8px">Waste, last 7 days</p>
+        <div style="font-size:28px;font-weight:700">${wasteTotalSek.toFixed(0)} kr</div>
+        ${wasteMissingCostCount > 0 ? `<p class="muted" style="font-size:12px;margin:4px 0 0">+ ${wasteMissingCostCount} logged item(s) with no known cost yet (set cost prices in Admin, or they'll fill in from future deliveries)</p>` : ""}
+        ${topWaste.length ? `
+          <div style="margin-top:12px">
+            ${topWaste.map(([name, sek]) => `
+              <div class="review-row"><span>${name}</span><span>${sek.toFixed(0)} kr</span></div>
+            `).join("")}
+          </div>
+        ` : `<p class="muted" style="font-size:13px;margin-top:8px">No waste logged with a known cost in the last 7 days.</p>`}
+      </div>
+
+      ${lowStock.length > 0 ? `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:16px">
+          <p class="muted" style="margin:0 0 8px">Below par level (from today's counts)</p>
+          ${lowStock.map((r) => `
+            <div class="review-row"><span>${r.productName} — ${r.locName}</span><span style="color:#b91c1c">${r.have}/${r.par} ${r.unit}</span></div>
+          `).join("")}
+        </div>
+      ` : ""}
 
       <p class="muted" style="margin-top:20px">All branches</p>
       ${rows.map(({ loc, record }) => `
