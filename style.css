@@ -257,23 +257,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
    seen once per visit (sign-in/sign-up/join); the sidebar uses the same
    markup without the animation class so repainting it on every
    navigation (see paintSidebar()) never re-triggers motion. */
-.veyro-logo { display: inline-flex; align-items: center; gap: 8px; }
+.veyro-logo { display: inline-flex; align-items: center; gap: 9px; }
+.veyro-logo-mark { filter: drop-shadow(0 2px 6px rgba(29,78,216,.35)); flex-shrink: 0; }
 .veyro-logo-text {
-  font-weight: 800; letter-spacing: -0.02em; color: var(--color-brand-dark);
+  font-weight: 800; letter-spacing: -0.025em; color: var(--color-brand-dark);
   font-size: calc(var(--logo-size, 28px) * 0.62);
 }
-.veyro-logo-animate .veyro-logo-mark path {
-  stroke-dasharray: 70; stroke-dashoffset: 70;
-  animation: veyro-draw 550ms ease-out forwards;
+.veyro-logo-animate .veyro-logo-mark rect {
+  transform-origin: 20px 20px;
+  animation: veyro-badge-in 420ms var(--ease-standard) both;
+}
+.veyro-logo-animate .veyro-logo-v {
+  stroke-dasharray: 46; stroke-dashoffset: 46;
+  animation: veyro-draw 450ms ease-out 220ms forwards;
 }
 .veyro-logo-animate .veyro-logo-text {
   opacity: 0; transform: translateY(3px);
-  animation: veyro-text-in 350ms ease-out 250ms forwards;
+  animation: veyro-text-in 350ms ease-out 380ms forwards;
 }
+@keyframes veyro-badge-in { from { opacity: 0; transform: scale(.55) rotate(-8deg); } to { opacity: 1; transform: none; } }
 @keyframes veyro-draw { to { stroke-dashoffset: 0; } }
 @keyframes veyro-text-in { to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .veyro-logo-animate .veyro-logo-mark path,
+  .veyro-logo-animate .veyro-logo-mark rect,
+  .veyro-logo-animate .veyro-logo-v,
   .veyro-logo-animate .veyro-logo-text { animation: none; stroke-dashoffset: 0; opacity: 1; transform: none; }
 }
 

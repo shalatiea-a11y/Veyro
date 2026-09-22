@@ -37,13 +37,26 @@ function uiIcon(name, size = 18) {
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${UI_ICONS[name] || DEFAULT_UI_ICON}</svg>`;
 }
 
-// Veyro wordmark. `animate` plays the draw-in once (sign-in/sign-up/join
+// Veyro wordmark: a rounded gradient badge with a cut "V" mark, plus the
+// name. `animate` plays the draw-in/pop-in once (sign-in/sign-up/join
 // screens, each rendered a single time); pass false for the sidebar,
 // which repaints on every navigation and shouldn't replay motion there.
+// The gradient needs a unique <id> per call — this can render twice at
+// once (sidebar + topbar, both visible on desktop), and duplicate SVG
+// ids are invalid even though most browsers silently tolerate it.
+let _veyroLogoInstance = 0;
 function veyroLogo(size = 28, animate = true) {
+  const gradId = `veyroGrad${_veyroLogoInstance++}`;
   return `<span class="veyro-logo ${animate ? "veyro-logo-animate" : ""}" style="--logo-size:${size}px">
     <svg class="veyro-logo-mark" width="${size}" height="${size}" viewBox="0 0 40 40" fill="none" aria-hidden="true">
-      <path d="M6 9l14 22L34 9" stroke="var(--color-brand)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <rect x="1.5" y="1.5" width="37" height="37" rx="11" fill="url(#${gradId})"/>
+      <path class="veyro-logo-v" d="M11 12.5l9 16 9-16" stroke="#fff" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <defs>
+        <linearGradient id="${gradId}" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#4f86ff"/>
+          <stop offset="1" stop-color="#1d4ed8"/>
+        </linearGradient>
+      </defs>
     </svg>
     <span class="veyro-logo-text">Veyro</span>
   </span>`;
