@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div class="splash" id="splash"><div class="splash-logo" id="splashLogo"></div></div>
 <div class="screen" style="padding-top:60px;max-width:360px">
   <div id="logoSlot" style="margin-bottom:22px"></div>
   <p class="muted">Sign in to your organization's account</p>
@@ -30,6 +31,7 @@
 <script src="ui.js"></script>
 <script>
   document.getElementById("logoSlot").innerHTML = veyroLogo(32);
+  document.getElementById("splashLogo").innerHTML = veyroLogo(56, true);
   document.getElementById("signInBtn").addEventListener("click", async () => {
     const btn = document.getElementById("signInBtn");
     const email = document.getElementById("email").value.trim();

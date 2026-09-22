@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div class="splash" id="splash"><div class="splash-logo" id="splashLogo"></div></div>
 <nav class="sidebar" id="sidebar" aria-label="Main navigation"></nav>
 <div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -21,6 +22,7 @@
 <script src="productMatcher.js"></script>
 <script src="storage.js"></script>
 <script src="ui.js"></script>
+<script>document.getElementById("splashLogo").innerHTML = veyroLogo(56, true);</script>
 <script src="app.js"></script>
 </body>
 </html>
