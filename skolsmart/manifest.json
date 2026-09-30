@@ -1,0 +1,14 @@
+{
+  "name": "SkolSmart",
+  "short_name": "SkolSmart",
+  "description": "Schema, uppgifter, prov, påminnelser, studieplan och tester för skolan.",
+  "lang": "sv",
+  "start_url": "./index.html#idag",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f1020",
+  "theme_color": "#4f46e5",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
