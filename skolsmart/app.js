@@ -7,6 +7,7 @@ const DAYS_LONG=["Måndag","Tisdag","Onsdag","Torsdag","Fredag","Lördag","Sönd
 const TYPES={prov:"Prov",inlamning:"Inlämning",lexa:"Läxa",jobb:"Jobb",annat:"Övrigt"};
 const COLORS=["#4f46e5","#16a34a","#dc2626","#d97706","#0891b2","#c026d3","#65a30d","#e11d48"];
 const KEY="skolsmart:v1";
+let CH=[],pendingImgs=[],busy=false,recog=null,speakOn=false;
 
 const iso=d=>{const z=n=>String(n).padStart(2,"0");return d.getFullYear()+"-"+z(d.getMonth()+1)+"-"+z(d.getDate())};
 const fromIso=s=>new Date(s+"T00:00:00");
@@ -34,7 +35,7 @@ let S=load();
 function load(){
  let d=null;try{d=JSON.parse(localStorage.getItem(KEY))}catch(e){}
  if(d&&d.v===1)return d;
- const subjects=["Biologi","Kemi","Samhällskunskap","Idrott och hälsa","Svenska","Engelska"].map((n,i)=>({id:uid(),name:n,color:COLORS[i%COLORS.length]}));
+ const subjects=["Biologi","Kemi","Fysik","Matematik","Svenska","Engelska","Samhällskunskap","Idrott och hälsa"].map((n,i)=>({id:uid(),name:n,color:COLORS[i%COLORS.length]}));
  const sid=n=>subjects.find(s=>s.name===n)?.id;
  const questions=SEED_Q.map(([s,t,l,q,a,w,e])=>({id:uid(),subjectId:sid(s),topic:t,level:l,q,a,wrong:w,exp:e}));
  return {v:1,subjects,lessons:[],tasks:[],questions,skill:{},settings:{notify:false},notified:{}};
@@ -55,7 +56,7 @@ function openDlg(html,onSubmit){
 }
 
 /* ---------- routing ---------- */
-const VIEWS={idag:vIdag,schema:vSchema,uppgifter:vUppgifter,plan:vPlan,test:vTest};
+const VIEWS={idag:vIdag,schema:vSchema,uppgifter:vUppgifter,plan:vPlan,test:vTest,ai:vAI};
 function render(){
  const key=(location.hash||"#idag").slice(1).split("/")[0];
  const v=VIEWS[key]?key:"idag";
@@ -239,13 +240,102 @@ function questionForm(){
  });
 }
 
+
+/* ---------- AI-agent ---------- */
+function agentContext(){
+ const td=todayIso(),now=new Date();
+ const ls=S.lessons.map(l=>`${DAYS[l.day]} ${l.start}-${l.end} ${l.kind==="work"?"Jobb "+(l.title||""):subj(l.subjectId).name}`).join("; ");
+ const ts=S.tasks.filter(t=>!t.done).map(t=>`${TYPES[t.type]}: ${t.title} (${subj(t.subjectId).name}) ${t.due}${t.time?" "+t.time:""}`).join("; ");
+ return `Idag: ${DAYS_LONG[dayIdx(now)]} ${td}\nSchema: ${ls||"inget inlagt"}\nOavklarade uppgifter/prov: ${ts||"inga"}`;
+}
+function bubble(m){
+ return `<div class="msg ${m.role}${m.err?" err":""}">${(m.images||[]).map(i=>`<img alt="Uppladdad bild" src="data:${i.mime};base64,${i.data}">`).join("")}${esc(m.text)}</div>`;
+}
+function vAI(){
+ const quick=["Förklara det jag har prov på härnäst","Hjälp mig planera veckan","Förklara det här steg för steg","Ge mig 5 övningsfrågor"];
+ return `<div><h1>AI-agent</h1><p class="sub">Din studiecoach för Na1. Fråga vad som helst om skolan, ladda upp en bild eller prata.</p></div>
+ <div class="chatlog" id="chatlog">${CH.length?CH.map(bubble).join(""):`<div class="empty">Hej! Jag kan förklara ämnen, läsa av bilder på blad och läxor och hjälpa dig planera. Vad behöver du hjälp med?</div>`}</div>
+ <div class="composer">
+  <div class="quick">${quick.map(q=>`<button class="btn sm" data-quick="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+  <div class="thumbs" id="thumbs"></div>
+  <div class="row"><button class="btn round" id="ai-img" aria-label="Lägg till bild">📷</button><button class="btn round" id="ai-mic" aria-label="Prata">🎤</button>
+  <textarea id="ai-text" rows="1" placeholder="Skriv eller prata…"></textarea><button class="btn pri round" id="ai-send" aria-label="Skicka">➤</button></div>
+  <div class="row between"><label style="flex-direction:row;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px"><input type="checkbox" id="ai-speak" style="width:auto"${speakOn?" checked":""}> Läs upp svar</label><select id="ai-lang" style="width:auto;padding:6px 8px;font-size:13px"><option value="sv-SE">Svenska</option><option value="en-US">English</option></select><button class="btn sm" id="ai-clear">Rensa chatt</button></div>
+  <input type="file" id="ai-file" accept="image/*" multiple hidden>
+ </div>`;
+}
+function shrinkImage(file){
+ return new Promise((res,rej)=>{
+  const img=new Image(),url=URL.createObjectURL(file);
+  img.onload=()=>{const k=Math.min(1,1400/Math.max(img.width,img.height)),c=document.createElement("canvas");c.width=Math.round(img.width*k);c.height=Math.round(img.height*k);c.getContext("2d").drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(url);res({mime:"image/jpeg",data:c.toDataURL("image/jpeg",.82).split(",")[1]})};
+  img.onerror=()=>rej(new Error("Kunde inte läsa bilden"));img.src=url;
+ });
+}
+function speak(t,lang){
+ if(!("speechSynthesis" in window))return;
+ speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t.replace(/[*_#`]/g,""));u.lang=lang;speechSynthesis.speak(u);
+}
+async function sendAI(text){
+ if(busy)return;text=text.trim();
+ if(!text&&!pendingImgs.length)return;
+ const log=$("#chatlog");if(log.querySelector(".empty"))log.innerHTML="";
+ const um={role:"user",text:text||"Läs av bilden och hjälp mig.",images:pendingImgs};
+ CH.push(um);pendingImgs=[];log.insertAdjacentHTML("beforeend",bubble(um));
+ $("#ai-text").value="";$("#thumbs").innerHTML="";
+ log.insertAdjacentHTML("beforeend",`<div class="msg assistant" id="typing">Tänker…</div>`);
+ busy=true;scrollTo(0,document.body.scrollHeight);
+ const lang=$("#ai-lang").value;
+ try{
+  const payload=CH.map((m,i)=>({role:m.role,text:m.text,images:i===CH.length-1?m.images:[]}));
+  const h={"content-type":"application/json"};if(S.settings.code)h["x-access-code"]=S.settings.code;
+  const r=await fetch("api/agent",{method:"POST",headers:h,body:JSON.stringify({messages:payload,context:agentContext()})});
+  let j={};try{j=await r.json()}catch(e){}
+  if(!r.ok)throw new Error(j.error||(r.status===404?"AI-servern är inte uppkopplad än (api/agent hittades inte).":"Fel "+r.status));
+  const am={role:"assistant",text:j.text};CH.push(am);
+  $("#typing").remove();log.insertAdjacentHTML("beforeend",bubble(am));
+  if($("#ai-speak").checked)speak(am.text,lang);
+ }catch(e){
+  const em={role:"assistant",text:e.message,err:true};
+  $("#typing")?.remove();log.insertAdjacentHTML("beforeend",bubble(em));CH.pop();
+ }
+ busy=false;scrollTo(0,document.body.scrollHeight);
+}
+function bindAI(){
+ const input=$("#ai-text"),file=$("#ai-file");
+ const drawThumbs=()=>{$("#thumbs").innerHTML=pendingImgs.map(i=>`<img alt="Vald bild" src="data:${i.mime};base64,${i.data}">`).join("")};
+ drawThumbs();
+ input.oninput=()=>{input.style.height="auto";input.style.height=Math.min(input.scrollHeight,120)+"px"};
+ input.onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendAI(input.value)}};
+ $("#ai-send").onclick=()=>sendAI(input.value);
+ $("#ai-img").onclick=()=>file.click();
+ file.onchange=async()=>{
+  for(const f of [...file.files].slice(0,4-pendingImgs.length)){try{pendingImgs.push(await shrinkImage(f))}catch(e){alert(e.message)}}
+  file.value="";drawThumbs();
+ };
+ $$("[data-quick]").forEach(b=>b.onclick=()=>sendAI(b.dataset.quick));
+ $("#ai-speak").onchange=e=>{speakOn=e.target.checked;if(!speakOn&&"speechSynthesis" in window)speechSynthesis.cancel()};
+ $("#ai-clear").onclick=()=>{CH=[];pendingImgs=[];render()};
+ const mic=$("#ai-mic"),SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){mic.disabled=true;mic.title="Din webbläsare stöder inte tal till text (prova Chrome eller Safari)";return}
+ mic.onclick=()=>{
+  if(recog){recog.stop();return}
+  recog=new SR();recog.lang=$("#ai-lang").value;recog.interimResults=true;
+  recog.onresult=e=>{input.value=[...e.results].map(r=>r[0].transcript).join("")};
+  recog.onend=()=>{mic.classList.remove("rec");const t=input.value;recog=null;if(t.trim())sendAI(t)};
+  recog.onerror=()=>{mic.classList.remove("rec");recog=null};
+  mic.classList.add("rec");recog.start();
+ };
+}
+
 /* ---------- settings + notifications ---------- */
 function settingsForm(){
  const supported="Notification" in window;
  openDlg(`<h2>Inställningar</h2>
  <label>Påminnelser<select name="notify"${supported?"":" disabled"}><option value="0"${S.settings.notify?"":" selected"}>Av</option><option value="1"${S.settings.notify?" selected":""}>På</option></select></label>
+ <label>Åtkomstkod för AI-agenten (om du satt en)<input name="code" type="password" value="${esc(S.settings.code||"")}" autocomplete="off"></label>
  <p class="sub">${supported?"Påminnelser visas när appen är öppen eller körs i bakgrunden. Riktiga push-notiser när appen är helt stängd kräver en server och kommer i en senare version.":"Din webbläsare stöder inte notiser."}</p>
  <div class="row"><button class="btn pri grow">Spara</button><button type="button" class="btn danger" data-wipe>Rensa all data</button></div>`,async fd=>{
+  S.settings.code=fd.get("code").trim();
   const on=fd.get("notify")==="1";
   if(on&&Notification.permission!=="granted"){const r=await Notification.requestPermission();S.settings.notify=r==="granted"}else S.settings.notify=on;
   save();
@@ -293,6 +383,7 @@ function bind(v){
   render();
  });
  $$("[data-again]").forEach(b=>b.onclick=()=>{const s=T.sid;T=null;startTest(s)});
+ if(v==="ai")bindAI();
  $$("[data-quit]").forEach(b=>b.onclick=()=>{T=null;render()});
 }
 $("#btn-settings").onclick=settingsForm;

@@ -37,7 +37,7 @@ h2{font-size:17px;margin:0}
 .btn:focus-visible,.chk:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));width:54px;height:54px;border-radius:50%;border:none;background:var(--accent);color:var(--accent-ink);font-size:28px;box-shadow:var(--shadow);cursor:pointer;z-index:4}
 .tabs{position:fixed;left:0;right:0;bottom:0;display:flex;background:var(--surface);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom);z-index:6}
-.tabs a{flex:1;text-align:center;text-decoration:none;color:var(--muted);font-size:11px;font-weight:600;padding:8px 0 6px;display:flex;flex-direction:column;gap:2px}
+.tabs a{flex:1;min-width:0;text-align:center;text-decoration:none;color:var(--muted);font-size:11px;font-weight:600;padding:8px 0 6px;display:flex;flex-direction:column;gap:2px}
 .tabs a i{font-style:normal;font-size:20px}
 .tabs a.on{color:var(--accent)}
 label{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
@@ -60,3 +60,18 @@ dialog form{display:flex;flex-direction:column;gap:12px}
 .big{font-size:44px;font-weight:800;color:var(--accent);line-height:1}
 .meter{display:grid;grid-template-columns:1fr 90px 40px;gap:8px;align-items:center;font-size:14px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+.chatlog{display:flex;flex-direction:column;gap:10px;min-height:40vh}
+.msg{max-width:88%;padding:10px 14px;border-radius:16px;white-space:pre-wrap;word-wrap:break-word;font-size:15px}
+.msg.user{align-self:flex-end;background:var(--accent);color:var(--accent-ink);border-bottom-right-radius:4px}
+.msg.assistant{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:4px}
+.msg.err{border-color:var(--bad);color:var(--bad)}
+.msg img{max-width:100%;border-radius:10px;display:block;margin-bottom:6px}
+.composer{position:sticky;bottom:calc(68px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;background:var(--bg);padding:8px 0}
+.composer .row{align-items:flex-end}
+.composer textarea{resize:none;max-height:120px}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap}
+.thumbs img{width:54px;height:54px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.round{width:44px;height:44px;border-radius:50%;padding:0;font-size:20px;flex:none}
+.rec{background:var(--bad);color:#fff;border-color:var(--bad)}
+.quick{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.quick .btn{white-space:nowrap}
