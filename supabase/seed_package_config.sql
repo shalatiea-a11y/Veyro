@@ -1,25 +1,30 @@
--- Package/unit configuration for the product catalog specified in this
--- phase. CONFIGURATION ONLY — no current stock/inventory counts are
--- inserted here, only package sizes and conversion factors, per this
--- phase's explicit instruction.
+-- Package/unit configuration for the product catalog. CONFIGURATION ONLY —
+-- no current stock/inventory counts are inserted here, only package sizes
+-- and conversion factors.
 --
--- Run this in your Supabase SQL editor AFTER schema.sql's new sections
--- (product_packages, product_external_mappings, the new products
--- columns, resolve_generic_inventory_quantity, and the updated
--- submit_daily_inventory) have been applied.
+-- Run this in your Supabase SQL editor AFTER schema.sql's product_packages/
+-- product_external_mappings sections, the products columns, and
+-- resolve_generic_inventory_quantity/submit_daily_inventory have been applied.
 --
 -- Targets YOUR organization automatically by looking it up from your own
 -- profile (shalatiea@gmail.com) — never touches any other organization.
 -- Safe to re-run: a product with the same name already in your org gets
 -- its config updated and its package tiers replaced, not duplicated.
 --
--- Unknown values were deliberately left unset rather than guessed:
---   - Nuggets: each piece weighs 22g and a bag is 1 kg (confirmed), so
---     bag -> piece -> kg is a real, exact conversion chain, not a note.
---   - Chili cheese: a bag is 48 pieces (confirmed) — tracked by piece
---     count, not weight.
---   - Ost cheddar's package/block/slice hierarchy IS fully specified
---     (4 blocks x 22 slices = 88 slices, 1 kg total), so it's configured.
+-- Names and conversion factors below were confirmed against the real
+-- Oracle MICROS Simphony inventory system (2026-10-04) — not guessed.
+-- A few notes on products whose unit doesn't match what the name implies:
+--   - Chicken Nuggets 22g: 1 bag = 105 pieces (NOT the earlier 1kg/22g
+--     estimate of ~45 — the real bag is closer to 2.3kg). Each piece is
+--     still 22g = 0.022kg, confirmed separately.
+--   - Chili Cheese Nuggets 1kg: 1 bag = 51 pieces (confirmed; earlier
+--     estimate was 48).
+--   - Kycklingfile Southern 125g: tracked by WEIGHT (kg) in Oracle, not
+--     piece count, even though it's sold in 25-piece bags — base_unit is
+--     kg here to match, with a piece=0.125kg tier for convenience.
+--   - Small kött: Oracle's own name is cut off in every screenshot we
+--     have ("Hamburgare 45 gr smashhamburgare 45 g (r...") — kept as
+--     "Small kött" until the full name is confirmed, rather than guess.
 
 do $$
 declare
@@ -43,45 +48,48 @@ begin
   ) on commit drop;
 
   insert into _pkg_products (name, category, base_unit, base_unit_label, unit_weight_g, unit_volume_ml, net_weight_kg, open_piece_notes) values
-    ('Monster Energy',                'Drinks', 'piece', 'can',   null, 500,  null, false),
-    ('Monster Ultra',                 'Drinks', 'piece', 'can',   null, 500,  null, false),
-    ('Monster Mango',                 'Drinks', 'piece', 'can',   null, 500,  null, false),
-    ('Bacon',                         'Meat',   'kg',    null,    null, null, null, false),
-    ('Stora kött',                    'Meat',   'piece', 'patty', 114,  null, null, false),
-    ('Small kött',                    'Meat',   'piece', 'patty', 45,   null, null, false),
-    ('Kycklingburgare crispy',        'Meat',   'piece', null,    null, null, null, false),
-    ('Vegoburgare crispy nochick O',  'Meat',   'piece', null,    null, null, null, false),
-    ('Stora bröd',                    'Bread',  'piece', 'bun',   null, null, null, false),
-    ('Small bröd',                    'Bread',  'piece', 'bun',   null, null, null, false),
-    ('Potatis bröd',                  'Bread',  'piece', 'bun',   null, null, null, false),
-    ('Glutenfri',                     'Bread',  'piece', 'bun',   null, null, null, false),
-    ('Pommes',                        'Frozen', 'kg',    null,    null, null, null, false),
-    ('Nuggets',                       'Frozen', 'kg',    null,    null, null, null, false),
-    ('Chili cheese',                  'Frozen', 'piece', 'piece', null, null, null, false),
-    ('Ost cheddar',                   'Cheese', 'piece', 'slice', null, null, 1,    false),
-    ('Grillost',                      'Cheese', 'piece', null,    null, null, null, false);
+    ('Monster Energy',                   'Drinks', 'piece', 'can',   null, 500, null, false),
+    ('Monster energy Ultra',             'Drinks', 'piece', 'can',   null, 500, null, false),
+    ('Monster Mango Loco',               'Drinks', 'piece', 'can',   null, 500, null, false),
+    ('Bacon Stekt 500g',                 'Meat',   'kg',    null,    null, null, null, false),
+    ('Hamburgare 114g, (räkna antal i puckar)', 'Meat', 'piece', 'patty', 114, null, null, false),
+    ('Small kött',                       'Meat',   'piece', 'patty', 45,   null, null, false),
+    ('Kycklingfile Southern 125g',       'Meat',   'kg',    null,    null, null, null, false),
+    ('Kycklingvingar',                   'Meat',   'piece', null,    null, null, null, false),
+    ('Vegoburgare Crispy NoChick 90g',   'Meat',   'piece', null,    null, null, null, false),
+    ('Hamburgerbröd Brioche Bun 50g',    'Bread',  'piece', 'bun',   null, null, null, false),
+    ('Hamburgerbröd 44',                 'Bread',  'piece', 'bun',   null, null, null, false),
+    ('Hamburgerbröd Potato 70g Glaze',   'Bread',  'piece', 'bun',   null, null, null, false),
+    ('Hamburgerbröd Glutfri 70g',        'Bread',  'piece', 'bun',   null, null, null, false),
+    ('Pommes Sure Crisp m Skal 6mm',     'Frozen', 'kg',    null,    null, null, null, false),
+    ('Chicken Nuggets 22g',              'Frozen', 'kg',    null,    null, null, null, false),
+    ('Chili Cheese Nuggets 1kg',         'Frozen', 'piece', 'piece', null, null, null, false),
+    ('Hamburgerost lättsmält',           'Cheese', 'piece', 'slice', null, null, 1,    false),
+    ('Grillost Pannoumi Skiv 60g',       'Cheese', 'piece', null,    null, null, null, false);
 
   insert into _pkg_tiers (product_name, sort_order, tier_name, contains, unit) values
-    ('Monster Energy',               1, 'carton', 24,  'piece'),
-    ('Monster Ultra',                1, 'carton', 24,  'piece'),
-    ('Monster Mango',                1, 'carton', 24,  'piece'),
-    ('Stora kött',                   1, 'carton', 24,  'piece'),
-    ('Small kött',                   1, 'carton', 60,  'piece'),
-    ('Kycklingburgare crispy',       1, 'bag',    25,  'piece'),
-    ('Vegoburgare crispy nochick O', 1, 'bag',    24,  'piece'),
-    ('Stora bröd',                   1, 'carton', 42,  'piece'),
-    ('Small bröd',                   1, 'carton', 48,  'piece'),
-    ('Potatis bröd',                 1, 'carton', 40,  'piece'),
-    ('Glutenfri',                    1, 'bag',    4,   'piece'),
-    ('Pommes',                       1, 'carton', 5,   'bag'),
-    ('Pommes',                       2, 'bag',    2.5, 'kg'),
-    ('Nuggets',                      1, 'bag',    1000.0/22.0, 'piece'),
-    ('Nuggets',                      2, 'piece',  0.022, 'kg'),
-    ('Chili cheese',                 1, 'bag',    48,  'piece'),
-    ('Ost cheddar',                  1, 'package',4,   'block'),
-    ('Ost cheddar',                  2, 'block',  22,  'piece'),
-    ('Grillost',                     1, 'box',    16,  'piece');
-    -- Bacon intentionally has NO tiers: base_unit (kg) is entered directly.
+    ('Monster Energy',                   1, 'carton', 24,  'piece'),
+    ('Monster energy Ultra',             1, 'carton', 24,  'piece'),
+    ('Monster Mango Loco',               1, 'carton', 24,  'piece'),
+    ('Hamburgare 114g, (räkna antal i puckar)', 1, 'carton', 24, 'piece'),
+    ('Small kött',                       1, 'carton', 60,  'piece'),
+    ('Kycklingfile Southern 125g',       1, 'bag',    25,  'piece'),
+    ('Kycklingfile Southern 125g',       2, 'piece',  0.125, 'kg'),
+    ('Vegoburgare Crispy NoChick 90g',   1, 'bag',    24,  'piece'),
+    ('Hamburgerbröd Brioche Bun 50g',    1, 'carton', 42,  'piece'),
+    ('Hamburgerbröd 44',                 1, 'carton', 48,  'piece'),
+    ('Hamburgerbröd Potato 70g Glaze',   1, 'carton', 40,  'piece'),
+    ('Hamburgerbröd Glutfri 70g',        1, 'bag',    4,   'piece'),
+    ('Pommes Sure Crisp m Skal 6mm',     1, 'carton', 5,   'bag'),
+    ('Pommes Sure Crisp m Skal 6mm',     2, 'bag',    2.5, 'kg'),
+    ('Chicken Nuggets 22g',              1, 'bag',    105, 'piece'),
+    ('Chicken Nuggets 22g',              2, 'piece',  0.022, 'kg'),
+    ('Chili Cheese Nuggets 1kg',         1, 'bag',    51,  'piece'),
+    ('Hamburgerost lättsmält',           1, 'package',4,   'block'),
+    ('Hamburgerost lättsmält',           2, 'block',  22,  'piece'),
+    ('Grillost Pannoumi Skiv 60g',       1, 'box',    16,  'piece');
+    -- Bacon Stekt 500g and Kycklingvingar intentionally have NO tiers:
+    -- their base_unit (kg / piece) is entered directly.
 
   -- Insert only the products that don't already exist by name in this org.
   insert into products (organization_id, name, category, package_unit, units_per_package, base_unit, base_unit_label, unit_weight_g, unit_volume_ml, net_weight_kg, open_piece_notes)
