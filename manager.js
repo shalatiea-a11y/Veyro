@@ -47,13 +47,14 @@ async function renderDashboard() {
       Store.getDeliveries(),
       Store.getProducts(),
       Store.getRecentWaste({ days: 7 }),
+      Store.getSupplierPriceIncreases(),
     ]),
-    render: ([locations, todaysRecords, deliveries, products, recentWaste]) =>
-      renderDashboardBody(locations, todaysRecords, deliveries, products, recentWaste),
+    render: ([locations, todaysRecords, deliveries, products, recentWaste, priceIncreases]) =>
+      renderDashboardBody(locations, todaysRecords, deliveries, products, recentWaste, priceIncreases),
   });
 }
 
-function renderDashboardBody(locations, todaysRecords, deliveries, products, recentWaste) {
+function renderDashboardBody(locations, todaysRecords, deliveries, products, recentWaste, priceIncreases) {
   const rows = locations.map((loc) => ({
     loc,
     record: todaysRecords.find((r) => r.locationId === loc.id),
@@ -130,6 +131,18 @@ function renderDashboardBody(locations, todaysRecords, deliveries, products, rec
           </div>
         ` : `<p class="muted" style="font-size:13px;margin-top:8px">No waste logged with a known cost in the last 7 days.</p>`}
       </div>
+
+      ${priceIncreases.length > 0 ? `
+        <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:16px">
+          <p class="muted" style="margin:0 0 8px">Supplier price increases</p>
+          ${priceIncreases.map((p) => `
+            <div class="review-row">
+              <span>${p.productName} — ${p.supplierName}</span>
+              <span style="color:#b91c1c">${p.previousCost.toFixed(2)} → ${p.newCost.toFixed(2)} kr/${p.unitLabel} (+${p.pctChange.toFixed(0)}%)</span>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
 
       ${lowStock.length > 0 ? `
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-top:16px">

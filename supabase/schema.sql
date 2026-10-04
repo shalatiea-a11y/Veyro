@@ -1492,6 +1492,136 @@ end;
 $$;
 
 -- =======================================================================
+-- Supplier price history. Stores the per-base-unit cost derived for each
+-- delivery line (same math submit_delivery() already used to update
+-- products.cost_price), so price trends over time are queryable instead
+-- of only ever seeing the single latest price. Powers the Manager
+-- dashboard's "Supplier price increases" card.
+-- =======================================================================
+alter table delivery_items add column if not exists derived_cost_per_base_unit numeric;
+
+create or replace function submit_delivery(
+  p_location_id uuid, p_supplier_id uuid, p_invoice_number text,
+  p_invoice_date date, p_notes text, p_items jsonb, p_document_path text default null,
+  p_extraction_source text default 'manual'
+) returns uuid
+language plpgsql
+security invoker
+as $$
+declare
+  v_org_id uuid := current_org_id();
+  v_delivery_id uuid;
+  v_item jsonb;
+  v_product products%rowtype;
+  v_mode text;
+  v_full_boxes numeric;
+  v_pieces numeric;
+  v_fraction text;
+  v_unit_price numeric;
+  v_received numeric;
+  v_fraction_value numeric;
+  v_breakdown jsonb;
+  v_generic_result jsonb;
+  v_packages_at_entry jsonb;
+  v_cost_per_base numeric;
+  v_price_keys int;
+  v_price_qty numeric;
+begin
+  if v_org_id is null then
+    raise exception 'No organization linked to this account';
+  end if;
+
+  if not exists (select 1 from locations where id = p_location_id and organization_id = v_org_id) then
+    raise exception 'Location does not belong to your organization';
+  end if;
+
+  if current_role_name() = 'employee'
+     and not exists (select 1 from employee_locations where profile_id = auth.uid() and location_id = p_location_id) then
+    raise exception 'You are not assigned to this location';
+  end if;
+
+  if not exists (select 1 from suppliers where id = p_supplier_id and organization_id = v_org_id) then
+    raise exception 'Supplier does not belong to your organization';
+  end if;
+
+  insert into deliveries (organization_id, location_id, supplier_id, received_by, invoice_number, invoice_date, notes, document_path, extraction_source)
+  values (v_org_id, p_location_id, p_supplier_id, auth.uid(), p_invoice_number, p_invoice_date, p_notes, p_document_path, p_extraction_source)
+  returning id into v_delivery_id;
+
+  for v_item in select * from jsonb_array_elements(p_items) loop
+    select * into v_product from products
+      where id = (v_item->>'product_id')::uuid and organization_id = v_org_id;
+    if not found then
+      raise exception 'Product % does not belong to your organization', v_item->>'product_id';
+    end if;
+
+    v_mode := v_item->>'entry_mode';
+    v_full_boxes := nullif(v_item->>'entered_full_boxes', '')::numeric;
+    v_pieces := nullif(v_item->>'entered_pieces', '')::numeric;
+    v_fraction := nullif(v_item->>'entered_fraction', '');
+    v_unit_price := nullif(v_item->>'unit_price', '')::numeric;
+    v_breakdown := null;
+    v_packages_at_entry := null;
+    v_cost_per_base := null;
+
+    if v_mode = 'boxes_pieces' then
+      v_received := coalesce(v_full_boxes, 0) * v_product.units_per_package + coalesce(v_pieces, 0);
+      if v_unit_price is not null and coalesce(v_full_boxes, 0) > 0 and coalesce(v_pieces, 0) = 0 then
+        v_cost_per_base := v_unit_price / v_product.units_per_package;
+      end if;
+    elsif v_mode = 'fraction' then
+      v_fraction_value := case v_fraction
+        when 'full' then 1 when '3/4' then 0.75 when '1/2' then 0.5
+        when '1/3' then 1.0/3 when '1/4' then 0.25 else 0 end;
+      v_received := round(v_product.units_per_package * v_fraction_value);
+    elsif v_mode = 'pieces' then
+      v_received := coalesce(v_pieces, 0);
+    elsif v_mode = 'generic' then
+      v_breakdown := v_item->'entered_breakdown';
+      if v_breakdown is null then
+        raise exception 'Missing entered_breakdown for a generic entry';
+      end if;
+      v_generic_result := resolve_generic_inventory_quantity(v_product.id, v_breakdown);
+      v_received := (v_generic_result->>'normalized_quantity')::numeric;
+      v_packages_at_entry := v_generic_result->'packages_at_entry';
+
+      if v_unit_price is not null and v_received > 0 then
+        select count(*) into v_price_keys from jsonb_each_text(v_breakdown) kv where kv.key <> '_note_pieces';
+        if v_price_keys = 1 then
+          select (kv.value)::numeric into v_price_qty from jsonb_each_text(v_breakdown) kv where kv.key <> '_note_pieces';
+          if v_price_qty is not null and v_price_qty > 0 then
+            v_cost_per_base := v_unit_price * v_price_qty / v_received;
+          end if;
+        end if;
+      end if;
+    else
+      raise exception 'Unknown entry mode %', v_mode;
+    end if;
+
+    insert into delivery_items (
+      delivery_id, product_id, entry_mode, entered_full_boxes, entered_pieces,
+      entered_fraction, units_per_package_at_entry, received_quantity, unit_price,
+      entered_breakdown, packages_at_entry, invoice_line_order, extracted_text,
+      extracted_quantity, match_confidence, needs_review, derived_cost_per_base_unit
+    ) values (
+      v_delivery_id, v_product.id, v_mode, v_full_boxes, v_pieces,
+      v_fraction, case when v_mode = 'generic' then null else v_product.units_per_package end,
+      v_received, v_unit_price,
+      v_breakdown, v_packages_at_entry, nullif(v_item->>'invoice_line_order', '')::integer,
+      v_item->>'extracted_text', nullif(v_item->>'extracted_quantity', '')::numeric,
+      v_item->>'match_confidence', coalesce((v_item->>'needs_review')::boolean, false), v_cost_per_base
+    );
+
+    if v_cost_per_base is not null and v_cost_per_base > 0 then
+      update products set cost_price = v_cost_per_base where id = v_product.id;
+    end if;
+  end loop;
+
+  return v_delivery_id;
+end;
+$$;
+
+-- =======================================================================
 -- Weekly report scheduling. The "weekly-report" Edge Function
 -- (supabase/functions/weekly-report/) emails every admin/manager a
 -- summary — waste cost, deliveries, inventory completion, low stock —

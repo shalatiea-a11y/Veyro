@@ -19,6 +19,7 @@ window.Store = {
   getInventories: async () => ([]),
   getProducts: async () => ([]),
   getRecentWaste: async () => ([]),
+  getSupplierPriceIncreases: async () => ([]),
 };
 
 const code = fs.readFileSync(require("path").join(__dirname, "..", "manager.js"), "utf8");

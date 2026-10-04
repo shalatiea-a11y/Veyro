@@ -473,6 +473,54 @@ const Store = (() => {
     return data;
   }
 
+  // Flags a supplier raising their price between two consecutive
+  // deliveries of the same product, using derived_cost_per_base_unit
+  // (submit_delivery()'s own per-base-unit math — never a second
+  // formula). Only ever compares a price to the one immediately before
+  // it for that exact supplier+product pair, and only lines where that
+  // cost could be unambiguously derived — a product never flagged
+  // because of a missing/ambiguous price is silently skipped, not
+  // guessed at.
+  async function getSupplierPriceIncreases({ minPercent = 3 } = {}) {
+    const { data, error } = await supabaseClient
+      .from("delivery_items")
+      .select("product_id, derived_cost_per_base_unit, products(name, base_unit_label, base_unit), deliveries(supplier_id, received_at, suppliers(name))")
+      .not("derived_cost_per_base_unit", "is", null)
+      .order("received_at", { foreignTable: "deliveries", ascending: true });
+    if (error) throw error;
+
+    const bySupplierProduct = {};
+    data.forEach((row) => {
+      const supplierId = row.deliveries?.supplier_id;
+      if (!supplierId) return;
+      const key = `${supplierId}:${row.product_id}`;
+      (bySupplierProduct[key] ||= []).push(row);
+    });
+
+    const increases = [];
+    Object.values(bySupplierProduct).forEach((rows) => {
+      for (let i = 1; i < rows.length; i++) {
+        const prev = Number(rows[i - 1].derived_cost_per_base_unit);
+        const curr = Number(rows[i].derived_cost_per_base_unit);
+        if (prev <= 0) continue;
+        const pctChange = ((curr - prev) / prev) * 100;
+        if (pctChange >= minPercent) {
+          const row = rows[i];
+          increases.push({
+            productName: row.products?.name || "Unknown product",
+            supplierName: row.deliveries?.suppliers?.name || "Unknown supplier",
+            unitLabel: row.products?.base_unit_label || row.products?.base_unit || "",
+            previousCost: prev,
+            newCost: curr,
+            pctChange,
+            date: row.deliveries?.received_at,
+          });
+        }
+      }
+    });
+    return increases.sort((a, b) => b.pctChange - a.pctChange);
+  }
+
   // --- Suppliers (admin-managed, like products/locations) ---
   async function getAllSuppliers() {
     const { organization_id } = requireProfile();
@@ -642,6 +690,7 @@ const Store = (() => {
     submitWaste,
     getTodaysWaste,
     getRecentWaste,
+    getSupplierPriceIncreases,
     updateProductCostAndPar,
     getAllSuppliers,
     createSupplier,
