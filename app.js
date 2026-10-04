@@ -927,7 +927,10 @@ function renderWasteEntry(p) {
       await withBusyButton(btn, () => Store.submitWaste({
         locationId: loc.id, productId, breakdown, reason,
       }), { busyText: "Logging…", doneText: "Logged ✓" });
-      go("wasteProductList", p.category);
+      // Same reasoning as commitEntry(): the list is already the
+      // previous history entry, so pop back to it rather than push a
+      // duplicate (which would make the next Back land on this screen).
+      history.back();
     } catch (err) {
       errorEl.textContent = err.message || String(err);
       errorEl.style.display = "block";
@@ -1189,7 +1192,12 @@ function commitEntry(productId) {
     if (!ok) return;
     entry._confirmedHigh = true;
   }
-  go("productList", p.category);
+  // Back to the product list, not forward to a fresh copy of it — the
+  // list is already the previous history entry (that's where "Save"
+  // was reached from), so push here would leave a duplicate productList
+  // entry in history and make the next Back bounce to this entry screen
+  // instead of the category list.
+  history.back();
 }
 
 async function submitInventory() {
