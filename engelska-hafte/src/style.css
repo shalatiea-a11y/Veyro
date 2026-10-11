@@ -1,0 +1,48 @@
+@page{size:A4;margin:15mm 15mm 17mm 15mm}
+*{box-sizing:border-box}
+html{font-family:"Liberation Sans","DejaVu Sans",Arial,sans-serif;font-size:9.4pt;line-height:1.42;color:#1b263b}
+body{margin:0}
+h1{font-size:25pt;line-height:1.1;margin:0 0 4mm;color:#1b263b}
+.part{page-break-before:always;break-before:page;border-top:6px solid #f77f00;padding-top:5mm;margin-bottom:5mm}
+.part h1{font-size:22pt}.part .sub{color:#6c757d;font-size:11pt;margin:0}
+h2{font-size:15pt;margin:7mm 0 2.5mm;padding:1.5mm 3mm;background:#1b263b;color:#fff;border-left:6px solid #f77f00;break-after:avoid;border-radius:2px}
+h2 .n{color:#f77f00;margin-right:2mm}
+h3{font-size:11pt;margin:4mm 0 1.5mm;color:#1b263b;border-bottom:1.2px solid #f77f00;padding-bottom:.6mm;break-after:avoid}
+h4{font-size:10pt;margin:3mm 0 1mm;break-after:avoid}
+p{margin:1.4mm 0}
+ul,ol{margin:1.2mm 0 1.6mm;padding-left:5mm}li{margin:.5mm 0}
+b,strong{font-weight:700}
+.rule{background:#f4f6f9;border:1.2px solid #1b263b;border-left:5px solid #1b263b;border-radius:2px;padding:2mm 3mm;margin:2mm 0;break-inside:avoid}
+.rule .t{font-weight:700;text-transform:uppercase;font-size:8pt;letter-spacing:.06em;color:#1b263b;margin-bottom:1mm}
+.tip{background:#fff4e0;border:1.2px solid #f77f00;border-radius:2px;padding:2mm 3mm;margin:2mm 0;break-inside:avoid}
+.tip .t{font-weight:700;font-size:8pt;text-transform:uppercase;letter-spacing:.06em;color:#b45f00;margin-bottom:1mm}
+.mist{border:1.2px dashed #c0392b;border-radius:2px;padding:2mm 3mm;margin:2mm 0;background:#fff;break-inside:avoid}
+.mist .t{font-weight:700;font-size:8pt;text-transform:uppercase;letter-spacing:.06em;color:#c0392b;margin-bottom:1mm}
+.ex{margin:1.5mm 0;padding-left:3mm;border-left:3px solid #cbd5e1;font-style:normal}
+.ex i{font-style:italic}
+.no{color:#c0392b;font-weight:700}.ok{color:#17724f;font-weight:700}
+.no::before{content:"✗ "}.ok::before{content:"✓ "}
+.wrong{text-decoration:line-through;text-decoration-color:#c0392b}
+table{border-collapse:collapse;width:100%;margin:2mm 0;font-size:9pt;break-inside:auto}
+th{background:#1b263b;color:#fff;text-align:left;padding:1.2mm 2mm;font-weight:700;border:1px solid #1b263b}
+td{border:1px solid #9aa5b5;padding:1.1mm 2mm;vertical-align:top}
+tr{break-inside:avoid}
+tr:nth-child(even) td{background:#f7f9fb}
+td.k{font-weight:700;white-space:nowrap}
+.two{column-count:2;column-gap:7mm}.two>*{break-inside:avoid}
+.three{column-count:3;column-gap:5mm;font-size:9pt}.three div{break-inside:avoid}
+.small{font-size:8.6pt;color:#4a5568}
+.check::before{content:"☐ ";font-size:11pt}
+.ex-list{counter-reset:q;padding-left:0;list-style:none}
+.ex-list li{counter-increment:q;margin:1.3mm 0;padding-left:7mm;position:relative}
+.ex-list li::before{content:counter(q) ".";position:absolute;left:0;font-weight:700;color:#f77f00}
+.gap{display:inline-block;min-width:22mm;border-bottom:1px solid #1b263b}
+.cover{height:262mm;display:flex;flex-direction:column;justify-content:space-between;page-break-after:always}
+.cover .band{background:#1b263b;color:#fff;padding:14mm 12mm;border-bottom:8px solid #f77f00}
+.cover .band h1{color:#fff;font-size:34pt}
+.toc{columns:2;column-gap:8mm;font-size:9.4pt}.toc div{break-inside:avoid;margin:.5mm 0}.toc b{color:#f77f00}
+.nb{page-break-before:always}
+.ans h3{margin-top:3mm}.ans p{margin:.8mm 0;font-size:8.8pt}
+
+.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm;align-items:start;margin:2mm 0}.trio table{margin:0;font-size:8.6pt}.trio td,.trio th{padding:.5mm 1.6mm}
+.exb{break-inside:avoid;margin-bottom:2mm}.exb h3{margin-top:1mm}
