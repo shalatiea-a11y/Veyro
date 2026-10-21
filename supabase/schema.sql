@@ -1643,7 +1643,7 @@ select cron.schedule(
   $cron$
   select net.http_post(
     url := 'https://mmgdylbikusvjgczlrgy.supabase.co/functions/v1/weekly-report',
-    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', 'f2371e1a-27d1-4314-a50c-97146cb6af4e'),
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', 'REPLACE_WITH_YOUR_CRON_SECRET'),
     body := '{}'::jsonb
   );
   $cron$
