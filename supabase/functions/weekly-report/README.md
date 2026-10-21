@@ -18,8 +18,8 @@ sends until you do this.
 ## 2. Set the two secrets (Supabase Dashboard → Edge Functions → Secrets)
 
 - `RESEND_API_KEY` — the key from step 1.
-- `CRON_SECRET` — must be exactly `f2371e1a-27d1-4314-a50c-97146cb6af4e`
-  (this is the value already baked into the scheduled `pg_cron` job that
+- `CRON_SECRET` — a long random value you generate yourself (for example `openssl rand -hex 32`); never commit it
+  (the same value must be used in the scheduled `pg_cron` job that
   calls this function — changing it here without also updating the cron
   job in the database will just make every run fail with 401 again).
 
@@ -32,7 +32,7 @@ Wait for Monday, or trigger it immediately from the SQL Editor:
 ```sql
 select net.http_post(
   url := 'https://mmgdylbikusvjgczlrgy.supabase.co/functions/v1/weekly-report',
-  headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', 'f2371e1a-27d1-4314-a50c-97146cb6af4e'),
+  headers := jsonb_build_object('Content-Type', 'application/json', 'x-cron-secret', 'REPLACE_WITH_YOUR_CRON_SECRET'),
   body := '{}'::jsonb
 );
 -- then check the result:
