@@ -828,7 +828,7 @@ function renderGenericProductEntry(p) {
   };
 }
 
-const WASTE_REASONS = ["Spoiled / expired", "Dropped / damaged", "Prep error", "Customer return", "Other"];
+const WASTE_REASONS = ["End of date", "Rotten", "Spilled", "Testing", "Wrong Item"];
 
 // A single immediate log, not a staged multi-item session like Morning
 // Inventory — an employee throwing something away wants one tap, not a
