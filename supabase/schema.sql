@@ -1649,6 +1649,106 @@ select cron.schedule(
   $cron$
 );
 
+-- =======================================================================
+-- Recipes (Bill of Materials): links a Menu-category product (a sold
+-- burger) to the raw-ingredient products it consumes, in the component's
+-- own base_unit (kg/ml/piece). Sourced from the restaurant's "PG Burgare"
+-- recipe sheet, cross-checked against Oracle Simphony's own item names —
+-- never guessed. Powers automatic ingredient deduction when a menu item
+-- is logged as waste (see submit_waste() below).
+-- =======================================================================
+create table if not exists recipe_components (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references organizations(id),
+  menu_product_id uuid not null references products(id),
+  component_product_id uuid not null references products(id),
+  quantity numeric not null check (quantity > 0),
+  unit text not null check (unit in ('kg','ml','piece')),
+  notes text,
+  created_at timestamptz not null default now()
+);
+create index if not exists recipe_components_menu_idx on recipe_components(menu_product_id);
+alter table recipe_components enable row level security;
+drop policy if exists "recipe_components_org_read" on recipe_components;
+create policy "recipe_components_org_read" on recipe_components for select using (organization_id = (select organization_id from profiles where id = auth.uid()));
+drop policy if exists "recipe_components_org_write" on recipe_components;
+create policy "recipe_components_org_write" on recipe_components for all using (organization_id = (select organization_id from profiles where id = auth.uid())) with check (organization_id = (select organization_id from profiles where id = auth.uid()));
+
+-- Marks a waste_entries row that was created automatically from a
+-- recipe, rather than logged directly by a person — lets the UI tell
+-- "someone wasted this burger" apart from "this is the flour/cheese it
+-- used," while both still count toward the Manager dashboard's waste
+-- cost total.
+alter table waste_entries add column if not exists source_waste_id uuid references waste_entries(id);
+
+create or replace function submit_waste(
+  p_location_id uuid,
+  p_product_id uuid,
+  p_breakdown jsonb,
+  p_reason text default null
+) returns uuid
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_org_id uuid := current_org_id();
+  v_normalized numeric;
+  v_waste_id uuid;
+  v_cost numeric;
+  v_component record;
+  v_component_cost numeric;
+begin
+  if v_org_id is null then
+    raise exception 'No organization linked to this account';
+  end if;
+
+  if not exists (select 1 from locations where id = p_location_id and organization_id = v_org_id) then
+    raise exception 'Location does not belong to your organization';
+  end if;
+
+  if not exists (select 1 from products where id = p_product_id and organization_id = v_org_id) then
+    raise exception 'Product does not belong to your organization';
+  end if;
+
+  if current_role_name() = 'employee'
+     and not exists (select 1 from employee_locations where profile_id = auth.uid() and location_id = p_location_id) then
+    raise exception 'You are not assigned to this location';
+  end if;
+
+  v_normalized := (resolve_generic_inventory_quantity(p_product_id, p_breakdown)->>'normalized_quantity')::numeric;
+  select cost_price into v_cost from products where id = p_product_id;
+
+  insert into waste_entries (organization_id, location_id, product_id, breakdown, normalized_quantity, reason, recorded_by, unit_cost_at_entry)
+  values (v_org_id, p_location_id, p_product_id, p_breakdown, v_normalized, nullif(trim(p_reason), ''), auth.uid(), v_cost)
+  returning id into v_waste_id;
+
+  -- Recipe-driven ingredient deduction: if the wasted product is a menu
+  -- item with a known recipe, log each ingredient it consumed as its own
+  -- waste_entries row too (quantity = recipe amount * how many menu
+  -- items were wasted), tagged back to the parent via source_waste_id.
+  for v_component in
+    select component_product_id, quantity, unit
+    from recipe_components
+    where menu_product_id = p_product_id and organization_id = v_org_id
+  loop
+    select cost_price into v_component_cost from products where id = v_component.component_product_id;
+    insert into waste_entries (
+      organization_id, location_id, product_id, breakdown, normalized_quantity,
+      reason, recorded_by, unit_cost_at_entry, source_waste_id
+    )
+    values (
+      v_org_id, p_location_id, v_component.component_product_id,
+      jsonb_build_object('auto_from_recipe', true, 'menu_product_id', p_product_id),
+      v_component.quantity * v_normalized,
+      nullif(trim(p_reason), ''), auth.uid(), v_component_cost, v_waste_id
+    );
+  end loop;
+
+  return v_waste_id;
+end;
+$$;
+
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
 -- in Supabase Auth (see README), then insert their profiles below.
