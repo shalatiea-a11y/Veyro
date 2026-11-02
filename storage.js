@@ -35,6 +35,7 @@ const Store = (() => {
       .select("*, product_packages(sort_order, name, contains, unit)")
       .eq("active", true)
       .order("category")
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     if (error) throw error;
     // packages stays [] for any product with no product_packages rows —
@@ -54,6 +55,7 @@ const Store = (() => {
       net_weight_kg: p.net_weight_kg,
       open_piece_notes: p.open_piece_notes,
       image_url: p.image_url,
+      pinned_waste: p.pinned_waste,
       packages: (p.product_packages || [])
         .slice()
         .sort((a, b) => a.sort_order - b.sort_order)
@@ -409,6 +411,14 @@ const Store = (() => {
   }
 
   // --- Waste tracking ---
+  // Pinning is a plain per-product flag, not per-user — the whole team
+  // shares one waste list, so "we always waste this, keep it on top" is
+  // a team decision, not a personal preference.
+  async function setWastePinned(productId, pinned) {
+    const { error } = await supabaseClient.rpc("set_waste_pinned", { p_product_id: productId, p_pinned: pinned });
+    if (error) throw error;
+  }
+
   // One immediate write per logged item (not staged/batched like Morning
   // Inventory) — submit_waste() does the server-side org/location/role
   // checks and the same generic unit conversion every other entry screen
@@ -688,6 +698,7 @@ const Store = (() => {
     correctInventoryItem,
     getInventoryCorrections,
     submitWaste,
+    setWastePinned,
     getTodaysWaste,
     getRecentWaste,
     getSupplierPriceIncreases,

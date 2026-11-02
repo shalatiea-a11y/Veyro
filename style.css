@@ -92,7 +92,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   font-size: 13px;
 }
 
-.screen { padding: 20px 16px 100px; max-width: 480px; margin: 0 auto; }
+.screen { padding: 20px 16px 110px; max-width: 480px; margin: 0 auto; }
 @media (min-width: 1024px) {
   /* Desktop gets real breathing room, not a stretched phone column — a
      manager scanning inventory/dashboard data benefits from a wider
@@ -163,7 +163,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   box-shadow: var(--shadow-sm);
 }
 .primary:disabled { background: #cbd5e1; box-shadow: none; }
-.sticky { position: sticky; bottom: 16px; box-shadow: 0 10px 28px rgba(37,99,235,0.32); }
+/* A save/submit action must never require scrolling to find, even with
+   the on-screen keyboard open over a number field — `position: sticky`
+   only re-anchors within the scroll container, so once the keyboard
+   shrinks the visible viewport it can end up pushed off-screen entirely.
+   `position: fixed` pins it to the real viewport instead, and the extra
+   bottom padding on .screen (above) keeps the last content row from
+   sitting underneath it. */
+.sticky {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; margin: 0;
+  max-width: 448px; margin-left: auto; margin-right: auto;
+  z-index: 40; box-shadow: 0 10px 28px rgba(37,99,235,0.32);
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 1024px) { .sticky { max-width: 656px; } }
+@media (min-width: 1440px) { .sticky { max-width: 796px; } }
 @media (hover: hover) {
   .primary:not(:disabled):hover { filter: brightness(1.06); box-shadow: var(--shadow-md); transform: translateY(-1px); }
   .secondary:hover, .ghost:hover { background: var(--color-bg); }

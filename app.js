@@ -6,6 +6,20 @@ let LOCATIONS = [];
 let CATEGORIES = [];
 let PROFILE = null;
 
+// Station workflow order, not alphabetical: sauces and bags/paper/cups
+// are reached for constantly during a shift, so they sit at the top of
+// the category grid instead of wherever they'd fall alphabetically.
+// Anything not listed here keeps its place after, alphabetically.
+const CATEGORY_PRIORITY = ["Sauces", "Packaging", "Paper"];
+function sortCategories(categories) {
+  return [...categories].sort((a, b) => {
+    const ai = CATEGORY_PRIORITY.indexOf(a);
+    const bi = CATEGORY_PRIORITY.indexOf(b);
+    if (ai !== -1 || bi !== -1) return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+    return a.localeCompare(b);
+  });
+}
+
 // Delivery Receiving used to be its own HTML document (delivery.html),
 // reached via a full browser navigation. That navigation — unload this
 // page, load a new one — is exactly what produced the white screen the
@@ -444,7 +458,12 @@ const views = {
 
   async wasteProductList(category) {
     const loc = currentLocation();
-    const products = PRODUCTS.filter((p) => p.category === category);
+    // Pinned items first (team-starred "we always waste this"), then the
+    // category's normal order — matches how often someone actually needs
+    // to tap into this list versus scroll past rarely-wasted items.
+    const products = PRODUCTS.filter((p) => p.category === category)
+      .slice()
+      .sort((a, b) => (b.pinned_waste ? 1 : 0) - (a.pinned_waste ? 1 : 0));
     await runAsyncView(app, {
       load: () => Store.getTodaysWaste(loc.id),
       render: (todaysWaste) => {
@@ -459,10 +478,16 @@ const views = {
               const logged = loggedByProduct[p.id];
               const unitLabel = p.base_unit_label || p.base_unit || "pcs";
               return `
-                <button class="list-row" onclick="go('wasteEntry','${p.id}')">
-                  <span style="display:flex;align-items:center;gap:10px">${productIcon(p, 32)}${p.name}</span>
-                  <span class="row-right">${logged ? `${formatQty(logged)} ${unitLabel} today` : "Log waste →"}</span>
-                </button>
+                <div class="list-row" style="display:flex;align-items:center;gap:4px;padding-right:6px">
+                  <button onclick="go('wasteEntry','${p.id}')" style="flex:1;display:flex;align-items:center;justify-content:space-between;gap:10px;background:none;border:none;padding:0;text-align:left;cursor:pointer">
+                    <span style="display:flex;align-items:center;gap:10px">${productIcon(p, 32)}${p.name}</span>
+                    <span class="row-right">${logged ? `${formatQty(logged)} ${unitLabel} today` : "Log waste →"}</span>
+                  </button>
+                  <button aria-label="${p.pinned_waste ? "Unpin" : "Pin to top"}" onclick="toggleWastePin('${p.id}','${category}')"
+                    style="background:none;border:none;padding:6px;cursor:pointer;color:${p.pinned_waste ? "#f59e0b" : "#d1d5db"}">
+                    ${uiIcon("star", 20)}
+                  </button>
+                </div>
               `;
             }).join("")}
           </div>
@@ -475,6 +500,20 @@ const views = {
     const p = PRODUCTS.find((x) => x.id === productId);
     renderWasteEntry(p);
   },
+};
+
+window.toggleWastePin = async (productId, category) => {
+  const p = PRODUCTS.find((x) => x.id === productId);
+  if (!p) return;
+  const next = !p.pinned_waste;
+  p.pinned_waste = next; // optimistic — re-render immediately, don't wait on the network
+  await views.wasteProductList(category);
+  try {
+    await Store.setWastePinned(productId, next);
+  } catch (err) {
+    p.pinned_waste = !next; // roll back on failure
+    await views.wasteProductList(category);
+  }
 };
 
 // --- Primary path: match against the invoice via real OCR extraction ---
@@ -607,7 +646,7 @@ function renderOcrReview() {
             <label>Received</label>
             <div class="stepper">
               <button onclick="adjustOcrReceived(-1)" aria-label="Decrease">${uiIcon("minus", 16)}</button>
-              <input id="ocrReceivedInput" type="number" min="0" step="any" value="${line.receivedQuantity}"
+              <input id="ocrReceivedInput" type="number" inputmode="decimal" min="0" step="any" value="${line.receivedQuantity}"
                 style="width:64px;text-align:center;border:none;font-size:18px;font-weight:600" oninput="setOcrReceived(this.value)">
               <button onclick="adjustOcrReceived(1)" aria-label="Increase">${uiIcon("plus", 16)}</button>
             </div>
@@ -1029,13 +1068,13 @@ function renderDelivery() {
           </select>
         </div>
         <div class="stepper-row"><label>Full boxes</label>
-          <input id="deliveryFullBoxes" type="number" min="0" value="0" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+          <input id="deliveryFullBoxes" type="number" inputmode="decimal" min="0" value="0" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
         </div>
         <div class="stepper-row"><label>Pieces</label>
-          <input id="deliveryPieces" type="number" min="0" value="0" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+          <input id="deliveryPieces" type="number" inputmode="decimal" min="0" value="0" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
         </div>
         <div class="stepper-row"><label>Unit price (optional)</label>
-          <input id="deliveryUnitPrice" type="number" min="0" step="0.01" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
+          <input id="deliveryUnitPrice" type="number" inputmode="decimal" min="0" step="0.01" style="width:100px;padding:8px;border:1px solid #e5e7eb;border-radius:8px">
         </div>
         <button class="pill" onclick="addDeliveryItem()" style="margin-top:8px">Add to delivery</button>
       </div>
@@ -1242,7 +1281,7 @@ async function boot() {
   try {
     PROFILE = await Store.init();
     [PRODUCTS, LOCATIONS] = await Promise.all([Store.getProducts(), Store.getLocations()]);
-    CATEGORIES = [...new Set(PRODUCTS.map((p) => p.category))];
+    CATEGORIES = sortCategories([...new Set(PRODUCTS.map((p) => p.category))]);
     // The cached location id is a device-local preference, not org data —
     // it can point at a location from a different account that previously
     // used this browser, or one that no longer exists. Validate it against

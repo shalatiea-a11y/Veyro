@@ -1324,6 +1324,11 @@ alter table deliveries add column if not exists document_path text;
 -- =======================================================================
 alter table products add column if not exists cost_price numeric check (cost_price is null or cost_price >= 0);
 alter table products add column if not exists par_level numeric check (par_level is null or par_level >= 0);
+-- Optional override of the default category+name alphabetical order —
+-- null falls back to alphabetical, set values sort first (ascending,
+-- nulls last). Used so Sauces/Packaging/Paper station workflow order
+-- (e.g. meat sauce before fries sauce) doesn't have to match the alphabet.
+alter table products add column if not exists sort_order integer;
 alter table waste_entries add column if not exists unit_cost_at_entry numeric;
 
 create or replace function submit_delivery(
@@ -1748,6 +1753,39 @@ begin
   return v_waste_id;
 end;
 $$;
+
+-- =======================================================================
+-- Lets a product be pinned to the top of its category in the Waste
+-- screens — "we always waste this, keep it one tap away" is a team
+-- decision shared by everyone at a location, not a personal setting.
+-- A dedicated security-definer RPC (rather than a direct table update)
+-- because the "products admin update" RLS policy otherwise blocks
+-- employees from touching the products table at all; this narrowly
+-- bypasses that for the one pinned_waste flag, nothing else.
+-- =======================================================================
+alter table products add column if not exists pinned_waste boolean not null default false;
+
+create or replace function set_waste_pinned(p_product_id uuid, p_pinned boolean) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_org_id uuid := current_org_id();
+begin
+  if v_org_id is null then
+    raise exception 'No organization linked to this account';
+  end if;
+
+  if not exists (select 1 from products where id = p_product_id and organization_id = v_org_id) then
+    raise exception 'Product does not belong to your organization';
+  end if;
+
+  update products set pinned_waste = p_pinned where id = p_product_id;
+end;
+$$;
+revoke all on function set_waste_pinned(uuid, boolean) from public;
+grant execute on function set_waste_pinned(uuid, boolean) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Demo seed data. Safe to run once. Create the two demo logins afterwards
