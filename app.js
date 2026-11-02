@@ -4,6 +4,7 @@ let session = { entries: {} }; // productId -> { mode, fullBoxes, pieces, fracti
 let PRODUCTS = [];
 let LOCATIONS = [];
 let CATEGORIES = [];
+let INVENTORY_CATEGORIES = [];
 let PROFILE = null;
 
 // Station workflow order, not alphabetical: sauces and bags/paper/cups
@@ -210,7 +211,7 @@ const views = {
       <div class="screen">
         <p class="muted">Select category</p>
         <div class="grid">
-          ${CATEGORIES.map((c) => {
+          ${INVENTORY_CATEGORIES.map((c) => {
             const count = PRODUCTS.filter((p) => p.category === c).length;
             const done = PRODUCTS.filter((p) => p.category === c && session.entries[p.id]).length;
             return `
@@ -228,7 +229,7 @@ const views = {
   },
 
   async productList(category) {
-    const products = PRODUCTS.filter((p) => p.category === category);
+    const products = PRODUCTS.filter((p) => p.category === category && p.category !== "Menu");
     render(`
       <div class="topbar"><button class="back" onclick="history.back()">←</button><div class="brand">${category}</div></div>
       <div class="screen">
@@ -1282,6 +1283,12 @@ async function boot() {
     PROFILE = await Store.init();
     [PRODUCTS, LOCATIONS] = await Promise.all([Store.getProducts(), Store.getLocations()]);
     CATEGORIES = sortCategories([...new Set(PRODUCTS.map((p) => p.category))]);
+    // Menu items (sold burgers etc.) are never physically counted in
+    // inventory — you count the raw materials, not how many burgers are
+    // "in stock". They still belong in Waste (throwing away a burger is
+    // what triggers the recipe's automatic ingredient deduction), so
+    // this is a separate, narrower list used only by the Inventory views.
+    INVENTORY_CATEGORIES = CATEGORIES.filter((c) => c !== "Menu");
     // The cached location id is a device-local preference, not org data —
     // it can point at a location from a different account that previously
     // used this browser, or one that no longer exists. Validate it against
